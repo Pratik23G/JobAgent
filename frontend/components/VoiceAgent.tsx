@@ -25,8 +25,12 @@ export default function VoiceAgent() {
   const [resumeData, setResumeData] = useState<ResumeData | null>(null);
   const [speechSupported, setSpeechSupported] = useState(true);
 
+  const [sessionId] = useState(() => crypto.randomUUID());
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
+  const manualStopRef = useRef(false);
+  const listenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const responseRef = useRef<HTMLDivElement>(null);
 
   // Load resume data on mount
@@ -69,7 +73,7 @@ export default function VoiceAgent() {
         const res = await fetch("/api/agent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ command, resumeData }),
+          body: JSON.stringify({ command, resumeData, sessionId }),
         });
 
         if (!res.ok) {
@@ -98,13 +102,22 @@ export default function VoiceAgent() {
         setIsThinking(false);
       }
     },
-    [resumeData]
+    [resumeData, sessionId]
   );
 
-  const toggleListening = useCallback(() => {
+  const stopListening = useCallback(() => {
+    manualStopRef.current = true;
+    if (listenTimeoutRef.current) {
+      clearTimeout(listenTimeoutRef.current);
+      listenTimeoutRef.current = null;
+    }
+    recognitionRef.current?.stop();
+    setIsListening(false);
+  }, []);
+
+  const toggleListening = useCallback(async () => {
     if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
+      stopListening();
       return;
     }
 
@@ -112,10 +125,22 @@ export default function VoiceAgent() {
       window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return;
 
+    manualStopRef.current = false;
+
+    // Request microphone permission first
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      alert("Microphone access denied. Please allow microphone access and try again.");
+      return;
+    }
+
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
+
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (event: any) => {
@@ -130,17 +155,40 @@ export default function VoiceAgent() {
         }
       }
       setTranscript(final || interim);
+
+      // When we get a final result, wait 2s of silence then send
       if (final) {
-        sendCommand(final);
+        if (silenceTimer) clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          stopListening();
+          sendCommand(final);
+        }, 2000);
       }
     };
 
-    recognition.onerror = () => {
-      setIsListening(false);
+    recognition.onerror = (event: any) => {
+      console.log("[Voice] error:", event.error);
+      // These errors are recoverable — let onend handle restart
+      if (event.error === "no-speech" || event.error === "aborted") return;
+      // Fatal errors
+      stopListening();
     };
 
     recognition.onend = () => {
-      setIsListening(false);
+      console.log("[Voice] onend, manualStop:", manualStopRef.current);
+      // Auto-restart unless user manually stopped or command was sent
+      if (!manualStopRef.current) {
+        try {
+          setTimeout(() => {
+            if (!manualStopRef.current) {
+              recognition.start();
+              console.log("[Voice] restarted");
+            }
+          }, 100);
+        } catch {
+          setIsListening(false);
+        }
+      }
     };
 
     recognitionRef.current = recognition;
@@ -148,7 +196,12 @@ export default function VoiceAgent() {
     setIsListening(true);
     setTranscript("");
     setAgentResponse("");
-  }, [isListening, sendCommand]);
+
+    // Safety timeout: stop after 30s
+    listenTimeoutRef.current = setTimeout(() => {
+      stopListening();
+    }, 30000);
+  }, [isListening, sendCommand, stopListening]);
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();

@@ -59,12 +59,24 @@ CREATE TABLE agent_logs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Agent sessions (stateful conversation tracking)
+CREATE TABLE agent_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  messages JSONB DEFAULT '[]',
+  summary TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Enable Row Level Security
 ALTER TABLE resumes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE applications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE recruiter_emails ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_replies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_sessions ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies
 CREATE POLICY "Own data only" ON resumes FOR ALL USING (auth.uid()::text = user_id);
@@ -72,3 +84,4 @@ CREATE POLICY "Own data only" ON applications FOR ALL USING (auth.uid()::text = 
 CREATE POLICY "Own data only" ON recruiter_emails FOR ALL USING (auth.uid()::text = user_id);
 CREATE POLICY "Own data only" ON email_replies FOR ALL USING (auth.uid()::text = user_id);
 CREATE POLICY "Own data only" ON agent_logs FOR ALL USING (auth.uid()::text = user_id);
+CREATE POLICY "Own data only" ON agent_sessions FOR ALL USING (auth.uid()::text = user_id);

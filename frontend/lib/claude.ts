@@ -6,7 +6,7 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: "search_jobs",
     description:
-      "Search for job listings matching a title, location, and keywords",
+      "Search for job listings matching a title, location, and keywords. Returns results scored against the user's resume for fit.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -16,6 +16,11 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
           type: "array",
           items: { type: "string" },
           description: "Additional keywords",
+        },
+        min_match_score: {
+          type: "number",
+          description:
+            "Minimum resume match score 0-100 to include (default: 0). Set higher to only show strong fits.",
         },
       },
       required: ["title"],
@@ -39,7 +44,7 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: "apply_to_job",
     description:
-      "Submit a job application (saves to DB, triggers form fill or email apply)",
+      "Submit a job application (saves to DB). Check existing applications first to avoid duplicates.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -96,10 +101,52 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-export const AGENT_SYSTEM_PROMPT = `You are JobAgent, an AI assistant that helps users find and apply for jobs.
-You have access to the user's resume data.
-When a user gives you a voice command, you interpret it and use your tools to take real actions.
-Always confirm what you're about to do before doing it, and report back clearly.
-Be concise, efficient, and encouraging. The user wants results, not lengthy explanations.`;
+export function buildSystemPrompt(context: {
+  resumeSummary?: string;
+  skills?: string[];
+  recentApplications?: { company: string; job_title: string; status: string }[];
+  sessionSummary?: string;
+}) {
+  const parts = [
+    `You are JobAgent, an AI assistant that helps users find and apply for jobs.
+You interpret voice and text commands and use your tools to take real actions.
+Be concise, efficient, and encouraging. The user wants results, not lengthy explanations.`,
+  ];
+
+  if (context.resumeSummary) {
+    parts.push(`
+## User's Resume
+Summary: ${context.resumeSummary}
+${context.skills?.length ? `Key Skills: ${context.skills.join(", ")}` : ""}`);
+  }
+
+  if (context.recentApplications?.length) {
+    const appList = context.recentApplications
+      .slice(0, 15)
+      .map((a) => `- ${a.company} — ${a.job_title} (${a.status})`)
+      .join("\n");
+    parts.push(`
+## Previous Applications (avoid duplicates)
+${appList}`);
+  }
+
+  if (context.sessionSummary) {
+    parts.push(`
+## Earlier in this session
+${context.sessionSummary}`);
+  }
+
+  parts.push(`
+## Guidelines
+- When searching jobs, score results against the resume and highlight match quality.
+- Before applying, check if the user already applied to that company/role.
+- When presenting job results, show match score and why it's a good/bad fit.
+- Always confirm before taking irreversible actions (applying, sending emails).`);
+
+  return parts.join("\n");
+}
+
+// Keep the old export for backward compat, but prefer buildSystemPrompt
+export const AGENT_SYSTEM_PROMPT = buildSystemPrompt({});
 
 export { client as anthropic };
