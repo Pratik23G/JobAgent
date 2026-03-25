@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface ParsedResume {
   name: string;
@@ -17,6 +17,18 @@ export default function ResumeUploader() {
   const [uploading, setUploading] = useState(false);
   const [parsed, setParsed] = useState<ParsedResume | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Load previously parsed resume from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem("jobagent_resume");
+    if (stored) {
+      try {
+        setParsed(JSON.parse(stored));
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
 
   const handleUpload = useCallback(async () => {
     if (!file) return;
@@ -39,6 +51,11 @@ export default function ResumeUploader() {
 
       const data = await res.json();
       setParsed(data.parsed);
+
+      // Persist to localStorage so the agent can access it across pages
+      localStorage.setItem("jobagent_resume", JSON.stringify(data.parsed));
+      // Dispatch event so VoiceAgent picks it up immediately if on same page
+      window.dispatchEvent(new Event("resume-updated"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {

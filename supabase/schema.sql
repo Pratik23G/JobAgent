@@ -70,6 +70,23 @@ CREATE TABLE agent_sessions (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Apply packs (generated per job: cover letter, tailored resume points, Q&A answers)
+CREATE TABLE apply_packs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL,
+  application_id UUID REFERENCES applications(id),
+  job_title TEXT NOT NULL,
+  company TEXT NOT NULL,
+  job_url TEXT,
+  cover_letter TEXT,
+  resume_bullets TEXT,
+  why_good_fit TEXT,
+  common_answers JSONB,
+  outreach_email TEXT,
+  source TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Enable Row Level Security
 ALTER TABLE resumes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE applications ENABLE ROW LEVEL SECURITY;
@@ -77,6 +94,7 @@ ALTER TABLE recruiter_emails ENABLE ROW LEVEL SECURITY;
 ALTER TABLE email_replies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE apply_packs ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies
 CREATE POLICY "Own data only" ON resumes FOR ALL USING (auth.uid()::text = user_id);
@@ -85,3 +103,4 @@ CREATE POLICY "Own data only" ON recruiter_emails FOR ALL USING (auth.uid()::tex
 CREATE POLICY "Own data only" ON email_replies FOR ALL USING (auth.uid()::text = user_id);
 CREATE POLICY "Own data only" ON agent_logs FOR ALL USING (auth.uid()::text = user_id);
 CREATE POLICY "Own data only" ON agent_sessions FOR ALL USING (auth.uid()::text = user_id);
+CREATE POLICY "Own data only" ON apply_packs FOR ALL USING (auth.uid()::text = user_id);
