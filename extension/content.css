@@ -1,0 +1,5 @@
+/* Floating button hover effect */
+#jobagent-fill-trigger:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(129, 140, 248, 0.5) !important;
+}

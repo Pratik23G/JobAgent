@@ -1,0 +1,42 @@
+<!-- Open this file in a browser and right-click each canvas to "Save image as" -->
+<!-- Save as icon16.png, icon48.png, icon128.png in the icons/ folder -->
+<!DOCTYPE html>
+<html>
+<body style="background:#222; padding:20px;">
+<h2 style="color:white;">Right-click each icon → Save Image As → save to extension/icons/</h2>
+<div style="display:flex; gap:20px; align-items:end;">
+  <div>
+    <p style="color:white;">icon16.png</p>
+    <canvas id="c16" width="16" height="16"></canvas>
+  </div>
+  <div>
+    <p style="color:white;">icon48.png</p>
+    <canvas id="c48" width="48" height="48"></canvas>
+  </div>
+  <div>
+    <p style="color:white;">icon128.png</p>
+    <canvas id="c128" width="128" height="128"></canvas>
+  </div>
+</div>
+<script>
+function drawIcon(canvasId, size) {
+  const c = document.getElementById(canvasId);
+  const ctx = c.getContext('2d');
+  // Background
+  ctx.fillStyle = '#818cf8';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, size, size, size * 0.2);
+  ctx.fill();
+  // Letter J
+  ctx.fillStyle = '#0a0a0a';
+  ctx.font = `bold ${size * 0.6}px -apple-system, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('J', size/2, size/2 + size*0.03);
+}
+drawIcon('c16', 16);
+drawIcon('c48', 48);
+drawIcon('c128', 128);
+</script>
+</body>
+</html>
