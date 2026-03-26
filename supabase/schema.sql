@@ -97,6 +97,34 @@ CREATE TABLE gmail_tokens (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Email scan results (persisted so they survive page navigation)
+CREATE TABLE email_scans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id TEXT NOT NULL,
+  sender TEXT,
+  sender_email TEXT,
+  raw_subject TEXT,
+  company TEXT,
+  role TEXT,
+  classification TEXT NOT NULL,
+  confidence INT DEFAULT 0,
+  summary TEXT,
+  action TEXT,
+  received_at TIMESTAMPTZ,
+  linked_application_id UUID REFERENCES applications(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(session_id, sender_email, raw_subject)
+);
+
+-- Scan metadata (tracks when last scan happened per session)
+CREATE TABLE scan_metadata (
+  session_id TEXT PRIMARY KEY,
+  last_scanned_at TIMESTAMPTZ DEFAULT NOW(),
+  emails_scanned INT DEFAULT 0,
+  job_related INT DEFAULT 0,
+  statuses_updated INT DEFAULT 0
+);
+
 -- Enable Row Level Security
 ALTER TABLE resumes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE applications ENABLE ROW LEVEL SECURITY;

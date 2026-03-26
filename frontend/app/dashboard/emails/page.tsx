@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 
 interface ClassifiedEmail {
   from: string;
@@ -15,17 +15,6 @@ interface ClassifiedEmail {
   summary: string;
 }
 
-interface RecruiterEmail {
-  id: string;
-  recruiter_name: string | null;
-  recruiter_email: string;
-  company: string | null;
-  subject: string;
-  body: string;
-  sent_at: string;
-  status: string;
-}
-
 const CLASSIFICATION_STYLES: Record<string, string> = {
   interview_invitation: "bg-green-500/10 text-green-400 border-green-500/30",
   offer: "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
@@ -35,6 +24,17 @@ const CLASSIFICATION_STYLES: Record<string, string> = {
   follow_up_request: "bg-orange-500/10 text-orange-400 border-orange-500/30",
 };
 
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export default function EmailsPage() {
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailEmail, setGmailEmail] = useState("");
@@ -42,15 +42,15 @@ export default function EmailsPage() {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [scanResults, setScanResults] = useState<ClassifiedEmail[]>([]);
-  const [scanStats, setScanStats] = useState({ total: 0, jobRelated: 0, updated: 0 });
-  const [outreachEmails, setOutreachEmails] = useState<RecruiterEmail[]>([]);
+  const [lastScanned, setLastScanned] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const sessionId = typeof window !== "undefined"
     ? localStorage.getItem("jobagent_session_id") || ""
     : "";
 
-  // Check Gmail connection status
+  // Check Gmail connection
   const checkGmail = useCallback(async () => {
     if (!sessionId) { setLoading(false); return; }
     try {
@@ -61,32 +61,64 @@ export default function EmailsPage() {
       if (data.authUrl) setGmailAuthUrl(data.authUrl);
     } catch {
       // ignore
-    } finally {
-      setLoading(false);
     }
   }, [sessionId]);
 
-  // Fetch outreach emails via server API
-  const fetchOutreach = useCallback(async () => {
+  // Load persisted scan results from DB
+  const loadResults = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const res = await fetch(`/api/dashboard?sessionId=${sessionId}`);
+      const res = await fetch(`/api/gmail/results?sessionId=${sessionId}`);
       const data = await res.json();
-      // Dashboard returns applications — we need a separate fetch for emails
-      // For now, use the email_replies from scan results
+      if (data.results?.length > 0) {
+        setScanResults(data.results);
+      }
+      if (data.lastScannedAt) {
+        setLastScanned(data.lastScannedAt);
+      }
     } catch {
       // ignore
     }
   }, [sessionId]);
 
+  // Initial load: check Gmail + load persisted results
   useEffect(() => {
-    checkGmail();
-    fetchOutreach();
-  }, [checkGmail, fetchOutreach]);
+    Promise.all([checkGmail(), loadResults()]).finally(() => setLoading(false));
+  }, [checkGmail, loadResults]);
 
+  // Auto-poll: trigger background scan every 30 minutes
+  useEffect(() => {
+    if (!gmailConnected) return;
+
+    // Trigger cron scan immediately if last scan was > 30 min ago
+    const triggerIfStale = async () => {
+      if (lastScanned) {
+        const age = Date.now() - new Date(lastScanned).getTime();
+        if (age < 30 * 60 * 1000) return; // Less than 30 min, skip
+      }
+      try {
+        await fetch("/api/cron/gmail-scan");
+        await loadResults(); // Refresh UI
+      } catch {
+        // ignore
+      }
+    };
+
+    triggerIfStale();
+
+    // Poll every 30 minutes
+    pollRef.current = setInterval(() => {
+      fetch("/api/cron/gmail-scan").then(() => loadResults()).catch(() => {});
+    }, 30 * 60 * 1000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [gmailConnected, lastScanned, loadResults]);
+
+  // Manual scan
   const scanInbox = async () => {
     setScanning(true);
-    setScanResults([]);
     try {
       const res = await fetch("/api/gmail/scan", {
         method: "POST",
@@ -98,17 +130,13 @@ export default function EmailsPage() {
       if (data.error) {
         if (!data.connected) {
           setGmailConnected(false);
-          checkGmail(); // Refresh auth URL
+          checkGmail();
         }
         return;
       }
 
-      setScanResults(data.classified || []);
-      setScanStats({
-        total: data.totalEmails || 0,
-        jobRelated: data.jobRelated || 0,
-        updated: data.statusesUpdated || 0,
-      });
+      // Reload from DB to get deduped results
+      await loadResults();
     } catch {
       // ignore
     } finally {
@@ -123,6 +151,7 @@ export default function EmailsPage() {
       setGmailConnected(false);
       setGmailEmail("");
       setScanResults([]);
+      setLastScanned(null);
       checkGmail();
     } catch {
       // ignore
@@ -135,6 +164,11 @@ export default function EmailsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Emails</h1>
+        {lastScanned && (
+          <span className="text-xs text-muted">
+            Last scanned: {timeAgo(lastScanned)}
+          </span>
+        )}
       </div>
 
       {/* Gmail Connection Card */}
@@ -159,7 +193,7 @@ export default function EmailsPage() {
                   disabled={scanning}
                   className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90 disabled:opacity-50"
                 >
-                  {scanning ? "Scanning..." : "Scan Inbox for Replies"}
+                  {scanning ? "Scanning..." : "Scan Now"}
                 </button>
                 <button
                   onClick={disconnectGmail}
@@ -170,15 +204,9 @@ export default function EmailsPage() {
                 </button>
               </div>
             </div>
-
-            {/* Scan Stats */}
-            {scanStats.total > 0 && (
-              <div className="flex gap-4 text-xs text-muted">
-                <span>Scanned: {scanStats.total} emails</span>
-                <span>Job-related: {scanStats.jobRelated}</span>
-                <span>Statuses updated: {scanStats.updated}</span>
-              </div>
-            )}
+            <p className="text-xs text-muted">
+              Auto-scans every 30 minutes. Click &quot;Scan Now&quot; for immediate results.
+            </p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -194,22 +222,22 @@ export default function EmailsPage() {
               </a>
             ) : (
               <p className="text-xs text-red-400">
-                Gmail OAuth not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env.local.
+                Gmail OAuth not configured. Check .env.local for GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.
               </p>
             )}
           </div>
         )}
       </div>
 
-      {/* Scan Results */}
+      {/* Scan Results — always shown if we have persisted data */}
       {scanResults.length > 0 && (
         <div className="glass-card p-6">
           <h2 className="text-lg font-semibold mb-3">
-            Scan Results ({scanResults.length} job-related emails)
+            Job-Related Emails ({scanResults.length})
           </h2>
           <div className="space-y-3">
             {scanResults.map((email, i) => (
-              <div key={i} className="rounded-lg border border-card-border p-4 space-y-2">
+              <div key={`${email.fromEmail}-${email.subject}-${i}`} className="rounded-lg border border-card-border p-4 space-y-2">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -221,16 +249,13 @@ export default function EmailsPage() {
                       }`}>
                         {email.classification.replace(/_/g, " ")}
                       </span>
-                      {email.confidence >= 80 && (
-                        <span className="text-xs text-muted">({email.confidence}% confidence)</span>
-                      )}
                     </div>
                     {email.jobTitle && (
                       <p className="text-xs text-muted mt-0.5">{email.jobTitle}</p>
                     )}
                   </div>
                   <p className="text-xs text-muted shrink-0">
-                    {email.date ? new Date(email.date).toLocaleDateString() : ""}
+                    {email.date ? timeAgo(email.date) : ""}
                   </p>
                 </div>
 
@@ -255,12 +280,16 @@ export default function EmailsPage() {
         </div>
       )}
 
-      {/* Outreach Emails placeholder */}
-      {!gmailConnected && scanResults.length === 0 && !loading && (
+      {/* Empty state */}
+      {!loading && scanResults.length === 0 && (
         <div className="glass-card p-12 text-center">
-          <p className="text-lg text-muted">No email activity yet.</p>
+          <p className="text-lg text-muted">
+            {gmailConnected ? "No job-related emails found yet." : "No email activity yet."}
+          </p>
           <p className="mt-1 text-sm text-muted">
-            Connect Gmail above to scan for recruiter replies, or ask the Agent to email recruiters for you.
+            {gmailConnected
+              ? "Click \"Scan Now\" to check for recruiter replies, or wait for the auto-scan."
+              : "Connect Gmail above to scan for recruiter replies."}
           </p>
         </div>
       )}
