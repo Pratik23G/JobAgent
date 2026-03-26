@@ -589,7 +589,8 @@ async function handleToolCall(
   toolName: string,
   toolInput: Record<string, unknown>,
   userId: string,
-  resumeData: Record<string, unknown> | null
+  resumeData: Record<string, unknown> | null,
+  sessionId?: string
 ): Promise<string> {
   const supabase = getServiceClient();
 
@@ -1201,6 +1202,215 @@ Return ONLY the JSON, no markdown fences.`,
       }
     }
 
+    // ─── Fully Autonomous Auto-Apply ──────────────────────────────────────────
+
+    case "auto_apply_to_jobs": {
+      const title = toolInput.title as string;
+      const location = (toolInput.location as string) || "remote";
+      const keywords = (toolInput.keywords as string[]) || [];
+      const maxApps = Math.min((toolInput.max_applications as number) || 5, 10);
+      const minScore = (toolInput.min_match_score as number) || 60;
+      const mode = (toolInput.mode as string) || "review";
+
+      const resumeSummary = (resumeData as { summary?: string })?.summary || "Experienced professional";
+      const skills = (resumeData as { skills?: string[] })?.skills || [];
+
+      const result: {
+        jobs_found: number;
+        jobs_queued: number;
+        jobs: { company: string; title: string; url: string; score: number; status: string }[];
+        errors: string[];
+        mode: string;
+      } = {
+        jobs_found: 0,
+        jobs_queued: 0,
+        jobs: [],
+        errors: [],
+        mode,
+      };
+
+      try {
+        // Step 1: Search across all sources
+        const allJobs = await searchMultipleSources(title, location, keywords);
+        result.jobs_found = allJobs.length;
+
+        if (allJobs.length === 0) {
+          return JSON.stringify({
+            ...result,
+            message: `No jobs found for "${title}". Try broader search terms.`,
+          });
+        }
+
+        // Step 2: Score against resume
+        const scored = await scoreJobs(
+          allJobs,
+          resumeData as { summary?: string; skills?: string[] },
+          minScore
+        );
+
+        if (scored.length === 0) {
+          return JSON.stringify({
+            ...result,
+            message: `Found ${result.jobs_found} jobs but none scored above ${minScore}. Try lowering the minimum score.`,
+          });
+        }
+
+        const toApply = scored.slice(0, maxApps);
+
+        // Step 3: For each job — generate apply pack → save to DB → queue for extension
+        for (const job of toApply) {
+          // Check for duplicates
+          if (userId !== "anonymous") {
+            const { data: existing } = await supabase
+              .from("applications")
+              .select("id")
+              .eq("user_id", userId)
+              .ilike("company", `%${job.company}%`)
+              .ilike("job_title", `%${job.title}%`)
+              .limit(1);
+
+            if (existing && existing.length > 0) {
+              result.jobs.push({ company: job.company, title: job.title, url: job.url, score: job.match_score, status: "skipped_duplicate" });
+              continue;
+            }
+          }
+
+          try {
+            // Generate apply pack
+            const resp = await anthropic.messages.create({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 2500,
+              messages: [
+                {
+                  role: "user",
+                  content: `Generate a job application package. Return ONLY valid JSON, no markdown fences.
+
+Job: ${job.title} at ${job.company}
+Job Description: ${job.description}
+Candidate Summary: ${resumeSummary}
+Candidate Skills: ${skills.join(", ")}
+
+JSON format:
+{
+  "cover_letter": "Professional cover letter under 200 words, specific to this role",
+  "resume_bullets": "5 tailored resume bullet points matching this JD, each starting with action verb",
+  "why_good_fit": "2-3 sentence explanation of why this candidate fits this role",
+  "outreach_email": "Cold email under 80 words to hiring manager",
+  "common_answers": {
+    "why_this_company": "2 sentences",
+    "why_this_role": "2 sentences",
+    "greatest_strength": "1-2 sentences",
+    "salary_expectations": "Competitive salary commensurate with experience"
+  }
+}`,
+                },
+              ],
+            });
+
+            const rawText = resp.content[0].type === "text" ? resp.content[0].text : "{}";
+            const cleaned = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+            const pack = JSON.parse(cleaned);
+
+            // Save to DB
+            if (userId !== "anonymous") {
+              const { data: appData } = await supabase
+                .from("applications")
+                .insert({
+                  user_id: userId,
+                  job_title: job.title,
+                  company: job.company,
+                  job_url: job.url,
+                  cover_letter: pack.cover_letter || null,
+                  status: "queued",
+                  notes: `Auto-apply queued (${mode} mode). Score: ${job.match_score}.`,
+                })
+                .select("id")
+                .single();
+
+              await supabase.from("apply_packs").insert({
+                user_id: userId,
+                application_id: appData?.id || null,
+                job_title: job.title,
+                company: job.company,
+                job_url: job.url,
+                cover_letter: pack.cover_letter,
+                resume_bullets: pack.resume_bullets,
+                why_good_fit: pack.why_good_fit,
+                common_answers: pack.common_answers,
+                outreach_email: pack.outreach_email,
+                source: "auto_apply",
+              });
+            }
+
+            // Queue job for the extension to auto-navigate + fill
+            // The extension will receive this via SSE and process it
+            const sessionIdForEvents = userId.startsWith("anon_") ? userId.slice(5) : (sessionId || userId);
+
+            extensionEvents.publish(sessionIdForEvents, {
+              type: "auto_apply",
+              data: {
+                action: "navigate_and_fill",
+                mode, // "review" or "auto"
+                job: {
+                  company: job.company,
+                  title: job.title,
+                  url: job.url,
+                  score: job.match_score,
+                },
+                pack: {
+                  company: job.company,
+                  title: job.title,
+                  job_url: job.url,
+                  cover_letter: pack.cover_letter || "",
+                  resume_bullets: pack.resume_bullets || "",
+                  why_good_fit: pack.why_good_fit || "",
+                  common_answers: pack.common_answers || {},
+                  outreach_email: pack.outreach_email || "",
+                },
+              },
+            });
+
+            result.jobs.push({
+              company: job.company,
+              title: job.title,
+              url: job.url,
+              score: job.match_score,
+              status: "queued",
+            });
+            result.jobs_queued++;
+          } catch (err) {
+            result.errors.push(`${job.company}: ${String(err).slice(0, 100)}`);
+            result.jobs.push({ company: job.company, title: job.title, url: job.url, score: job.match_score, status: "error" });
+          }
+        }
+
+        // Log
+        if (userId !== "anonymous") {
+          await supabase.from("agent_logs").insert({
+            user_id: userId,
+            command: `auto_apply_to_jobs: ${title}`,
+            action: `Queued ${result.jobs_queued} jobs for auto-apply (${mode} mode)`,
+            result: { summary: result },
+          });
+        }
+
+        const modeDesc = mode === "auto"
+          ? "The extension will automatically navigate to each job, fill the form, upload your resume, and submit."
+          : "The extension will navigate to each job, fill the form, and upload your resume. You'll review and click submit for each one.";
+
+        return JSON.stringify({
+          ...result,
+          message: `Auto-apply pipeline started! Found ${result.jobs_found} jobs, ${result.jobs_queued} queued for ${mode} mode. ${modeDesc}`,
+        });
+      } catch (err) {
+        return JSON.stringify({
+          ...result,
+          error: "Auto-apply pipeline failed",
+          detail: String(err),
+        });
+      }
+    }
+
     // ─── Orchestration tools ─────────────────────────────────────────────────
 
     case "orchestrate_application": {
@@ -1462,7 +1672,8 @@ export async function POST(request: Request) {
             block.name,
             block.input as Record<string, unknown>,
             userId,
-            resume
+            resume,
+            sid
           );
 
           // Extract apply packs from tool results

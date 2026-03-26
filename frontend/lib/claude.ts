@@ -243,6 +243,37 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "auto_apply_to_jobs",
+    description:
+      "FULLY AUTONOMOUS job application agent. Searches jobs, scores against resume, generates apply packs, then sends each job to the browser extension which automatically navigates to the apply page, fills the form, uploads resume, and optionally submits. The user can choose 'review' mode (extension fills but waits for user to click submit) or 'auto' mode (extension fills and submits automatically). Use when the user says 'automatically apply to jobs', 'apply without me doing anything', 'hands-free apply', etc.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Target job title" },
+        location: { type: "string", description: "City or 'remote'" },
+        keywords: {
+          type: "array",
+          items: { type: "string" },
+          description: "Additional keywords",
+        },
+        max_applications: {
+          type: "number",
+          description: "Max number of jobs to apply to (default: 5, max: 10)",
+        },
+        min_match_score: {
+          type: "number",
+          description: "Minimum resume match score to auto-apply (default: 60)",
+        },
+        mode: {
+          type: "string",
+          enum: ["review", "auto"],
+          description: "review = fill forms but wait for user to submit (default). auto = fill and submit automatically.",
+        },
+      },
+      required: ["title"],
+    },
+  },
+  {
     name: "scan_gmail",
     description:
       "Scan the user's Gmail inbox for job-related emails (application confirmations, interview invitations, rejections, offers). Classifies each email and auto-updates application statuses. Use when the user says 'check my email', 'any replies?', 'scan my inbox', etc. Requires Gmail to be connected first.",
@@ -303,7 +334,9 @@ ${context.sessionSummary}`);
   parts.push(`
 ## Guidelines
 - When searching jobs, prefer search_jobs_multi over search_jobs for broader coverage across sources.
-- When the user wants to auto-apply or says "apply to jobs for me", use auto_apply_pipeline.
+- When the user wants to auto-apply or says "apply to jobs for me", use auto_apply_pipeline for prepare-only mode.
+- When the user wants FULLY AUTONOMOUS hands-free applying (extension auto-fills + submits), use auto_apply_to_jobs. This sends jobs directly to the extension for navigation, form fill, and submission.
+- auto_apply_to_jobs has two modes: "review" (fills forms, user clicks submit) and "auto" (fills and auto-submits). Default to "review" for safety.
 - Score results against the resume and highlight match quality.
 - Before applying to a single job, check if the user already applied to that company/role.
 - When presenting job results, show match score, source, and why it's a good/bad fit.

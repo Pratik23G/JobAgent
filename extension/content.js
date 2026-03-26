@@ -1,7 +1,7 @@
 // content.js — ATS form detector and auto-filler
-// Supports: Greenhouse, Lever, Workday, LinkedIn, Indeed, Workable, SmartRecruiters, BambooHR
+// Supports: Greenhouse, Lever, Workday, LinkedIn, Indeed, Workable, SmartRecruiters, BambooHR, Ashby
 
-// ─── Utility: set value and trigger React/Angular change events ──────────────
+// ─── Utility: improved dropdown matching with exact-first + fuzzy ────────────
 function setFieldValue(el, value) {
   if (!el || !value) return false;
 
@@ -9,19 +9,52 @@ function setFieldValue(el, value) {
 
   if (tag === "select") {
     const options = Array.from(el.options);
-    const match = options.find(o =>
-      o.text.toLowerCase().includes(value.toLowerCase()) ||
-      o.value.toLowerCase().includes(value.toLowerCase())
+    const valueLower = value.toLowerCase().trim();
+
+    // 1. Exact match on text or value
+    let match = options.find(o =>
+      o.text.trim().toLowerCase() === valueLower ||
+      o.value.trim().toLowerCase() === valueLower
     );
+
+    // 2. Partial match (contains)
+    if (!match) {
+      match = options.find(o =>
+        o.text.toLowerCase().includes(valueLower) ||
+        o.value.toLowerCase().includes(valueLower)
+      );
+    }
+
+    // 3. Reverse partial (value contained in option text)
+    if (!match) {
+      match = options.find(o =>
+        valueLower.includes(o.text.trim().toLowerCase()) && o.text.trim().length > 1
+      );
+    }
+
+    // 4. Fuzzy match — find closest by Levenshtein distance
+    if (!match && valueLower.length > 2) {
+      let bestDist = Infinity;
+      for (const o of options) {
+        if (!o.value || o.value === "" || o.disabled) continue;
+        const dist = levenshtein(valueLower, o.text.trim().toLowerCase());
+        if (dist < bestDist && dist <= Math.max(3, valueLower.length * 0.4)) {
+          bestDist = dist;
+          match = o;
+        }
+      }
+    }
+
     if (match) {
       el.value = match.value;
       el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("input", { bubbles: true }));
       return true;
     }
     return false;
   }
 
-  if (tag === "textarea" || (tag === "input" && ["text", "email", "tel", "url", "number"].includes(el.type))) {
+  if (tag === "textarea" || (tag === "input" && ["text", "email", "tel", "url", "number", "date", "month"].includes(el.type))) {
     el.focus();
     el.value = value;
 
@@ -49,6 +82,234 @@ function setFieldValue(el, value) {
   }
 
   return false;
+}
+
+// Levenshtein distance for fuzzy dropdown matching
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+// ─── Utility: set radio button by matching label or value ────────────────────
+function setRadioValue(fieldName, value) {
+  if (!value) return false;
+  const valueLower = value.toLowerCase().trim();
+
+  // Find radio buttons by name attribute
+  const radios = document.querySelectorAll(`input[type="radio"][name="${fieldName}"]`);
+  if (radios.length > 0) {
+    for (const radio of radios) {
+      const radioLabel = getLabelForElement(radio).toLowerCase();
+      const radioValue = (radio.value || "").toLowerCase();
+      if (radioValue === valueLower || radioLabel.includes(valueLower) || valueLower.includes(radioLabel)) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event("change", { bubbles: true }));
+        radio.dispatchEvent(new Event("click", { bubbles: true }));
+        return true;
+      }
+    }
+  }
+
+  // Also search by label text association
+  const allRadios = document.querySelectorAll('input[type="radio"]');
+  for (const radio of allRadios) {
+    const labelText = getLabelForElement(radio).toLowerCase();
+    if (labelText.includes(fieldName.toLowerCase())) {
+      const radioValue = (radio.value || "").toLowerCase();
+      const radioLabel = getLabelForElement(radio).toLowerCase();
+      // Match "yes"/"no" or specific values
+      if (radioValue === valueLower || radioLabel.includes(valueLower)) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event("change", { bubbles: true }));
+        radio.dispatchEvent(new Event("click", { bubbles: true }));
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+// ─── Utility: set checkbox value ─────────────────────────────────────────────
+function setCheckboxValue(el, shouldCheck) {
+  if (!el || el.type !== "checkbox") return false;
+  if (el.checked !== shouldCheck) {
+    el.checked = shouldCheck;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("click", { bubbles: true }));
+  }
+  return true;
+}
+
+// ─── Utility: get label text for any form element ────────────────────────────
+function getLabelForElement(el) {
+  // Check explicit label via for attribute
+  if (el.id) {
+    const label = document.querySelector(`label[for="${el.id}"]`);
+    if (label) return label.textContent.trim();
+  }
+
+  // Check parent label
+  const parentLabel = el.closest("label");
+  if (parentLabel) return parentLabel.textContent.trim();
+
+  // Check sibling label
+  const prev = el.previousElementSibling;
+  if (prev && prev.tagName === "LABEL") return prev.textContent.trim();
+
+  // Check parent container for label
+  const container = el.closest(".field, .form-group, [class*='field'], [class*='form-element'], [class*='question']");
+  if (container) {
+    const label = container.querySelector("label, [class*='label'], .field-label, legend");
+    if (label) return label.textContent.trim();
+  }
+
+  // Fallback to aria-label or placeholder
+  return el.getAttribute("aria-label") || el.placeholder || el.name || "";
+}
+
+// ─── Utility: find radio/checkbox groups by question text ────────────────────
+function findRadioGroupByQuestion(questionText) {
+  const questionLower = questionText.toLowerCase();
+  const fieldsets = document.querySelectorAll("fieldset, [role='radiogroup'], [class*='question'], [class*='field-group']");
+
+  for (const fieldset of fieldsets) {
+    const legend = fieldset.querySelector("legend, label, [class*='label'], [class*='question-text']");
+    if (legend && legend.textContent.toLowerCase().includes(questionLower)) {
+      return fieldset.querySelectorAll('input[type="radio"]');
+    }
+  }
+
+  // Search all labels for the question text, then find nearby radios
+  const labels = document.querySelectorAll("label, [class*='label'], legend, span[class*='question']");
+  for (const label of labels) {
+    if (label.textContent.toLowerCase().includes(questionLower)) {
+      const container = label.closest("[class*='field'], [class*='form-group'], [class*='question'], fieldset, [class*='row']");
+      if (container) {
+        const radios = container.querySelectorAll('input[type="radio"]');
+        if (radios.length > 0) return radios;
+      }
+    }
+  }
+
+  return null;
+}
+
+// Select radio from a group by matching the desired value
+function selectRadioByValue(radios, value) {
+  if (!radios || radios.length === 0 || !value) return false;
+  const valueLower = value.toLowerCase().trim();
+
+  for (const radio of radios) {
+    const radioLabel = getLabelForElement(radio).toLowerCase();
+    const radioValue = (radio.value || "").toLowerCase();
+    if (radioValue === valueLower || radioLabel === valueLower ||
+        radioLabel.includes(valueLower) || valueLower.includes(radioLabel)) {
+      radio.checked = true;
+      radio.dispatchEvent(new Event("change", { bubbles: true }));
+      radio.dispatchEvent(new Event("click", { bubbles: true }));
+      return true;
+    }
+  }
+  return false;
+}
+
+// ─── Fill common yes/no and work-related radio/checkbox questions ─────────────
+function fillCommonQuestions(profile, pack) {
+  const results = [];
+
+  // Question patterns → value mapping
+  const radioQuestions = [
+    {
+      patterns: ["authorized to work", "legally authorized", "work authorization", "eligible to work", "right to work"],
+      value: profile.workAuthorization ? "yes" : null,
+      name: "Work Authorization",
+    },
+    {
+      patterns: ["require sponsorship", "visa sponsorship", "need sponsorship", "immigration sponsorship"],
+      value: profile.workAuthorization && ["us citizen", "green card", "permanent resident"].some(v =>
+        (profile.workAuthorization || "").toLowerCase().includes(v)) ? "no" : "yes",
+      name: "Visa Sponsorship",
+    },
+    {
+      patterns: ["18 years", "at least 18", "age requirement", "over 18"],
+      value: "yes",
+      name: "Age Requirement",
+    },
+    {
+      patterns: ["willing to relocate", "open to relocation", "relocate"],
+      value: "yes",
+      name: "Relocation",
+    },
+    {
+      patterns: ["background check", "consent to background"],
+      value: "yes",
+      name: "Background Check",
+    },
+    {
+      patterns: ["drug test", "drug screening"],
+      value: "yes",
+      name: "Drug Test Consent",
+    },
+  ];
+
+  for (const q of radioQuestions) {
+    if (!q.value) continue;
+    for (const pattern of q.patterns) {
+      const radios = findRadioGroupByQuestion(pattern);
+      if (radios && radios.length > 0) {
+        const filled = selectRadioByValue(radios, q.value);
+        if (filled) {
+          results.push({ name: q.name, filled: true });
+          break;
+        }
+      }
+    }
+  }
+
+  // Handle checkboxes for agreements (terms, privacy, etc.)
+  const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+  for (const cb of checkboxes) {
+    if (cb.checked) continue;
+    const labelText = getLabelForElement(cb).toLowerCase();
+    if (labelText.includes("agree") || labelText.includes("terms") ||
+        labelText.includes("privacy") || labelText.includes("acknowledge") ||
+        labelText.includes("consent") || labelText.includes("confirm")) {
+      setCheckboxValue(cb, true);
+      results.push({ name: "Agreement Checkbox", filled: true });
+    }
+  }
+
+  // Salary expectations — fill if there's a field for it
+  if (pack?.common_answers?.salary_expectations) {
+    const salaryField = findFieldByLabel("salary") || findFieldByLabel("compensation") ||
+      findFieldByLabel("pay") || findFieldByLabel("desired salary");
+    if (salaryField && !salaryField.value) {
+      const filled = setFieldValue(salaryField, pack.common_answers.salary_expectations);
+      if (filled) results.push({ name: "Salary Expectations", filled: true });
+    }
+  }
+
+  // Greatest strength
+  if (pack?.common_answers?.greatest_strength) {
+    const strengthField = findFieldByLabel("greatest strength") || findFieldByLabel("strength");
+    if (strengthField && !strengthField.value) {
+      const filled = setFieldValue(strengthField, pack.common_answers.greatest_strength);
+      if (filled) results.push({ name: "Greatest Strength", filled: true });
+    }
+  }
+
+  return results;
 }
 
 // ─── File upload via DataTransfer API ─────────────────────────────────────────
@@ -174,6 +435,201 @@ function findFieldByLabel(labelText) {
   return null;
 }
 
+// ─── Fill address fields ─────────────────────────────────────────────────────
+function fillAddressFields(profile) {
+  const results = [];
+
+  const addressFields = [
+    { name: "Street Address", labels: ["street", "address line 1", "address_line_1", "address1", "street address", "mailing address"], value: profile.address },
+    { name: "Address Line 2", labels: ["address line 2", "address_line_2", "address2", "apt", "suite", "unit"], value: "" },
+    { name: "City", labels: ["city", "town"], value: profile.city },
+    { name: "State", labels: ["state", "province", "state/province", "region"], value: profile.state },
+    { name: "Zip Code", labels: ["zip", "postal", "zip code", "postal code", "zipcode"], value: profile.zip },
+    { name: "Country", labels: ["country", "nation"], value: profile.country },
+  ];
+
+  for (const field of addressFields) {
+    if (!field.value) continue;
+    let el = null;
+    for (const label of field.labels) {
+      el = findFieldByLabel(label);
+      if (el) break;
+    }
+    if (el && !el.value) {
+      const filled = setFieldValue(el, field.value);
+      if (filled) results.push({ name: field.name, filled: true });
+    }
+  }
+
+  return results;
+}
+
+// ─── Fill education fields ───────────────────────────────────────────────────
+function fillEducationFields(profile) {
+  const results = [];
+  if (!profile.education || profile.education.length === 0) return results;
+
+  // Click "Add Education" button if present (for repeating sections)
+  const addBtns = document.querySelectorAll("button, a");
+  for (const btn of addBtns) {
+    const text = (btn.textContent || "").toLowerCase().trim();
+    if (text.includes("add education") || text.includes("add school") || text.includes("add degree")) {
+      // Only click if no education fields exist yet
+      const existing = findFieldByLabel("school") || findFieldByLabel("university") || findFieldByLabel("degree");
+      if (!existing) {
+        btn.click();
+        // Wait for DOM to update
+        break;
+      }
+    }
+  }
+
+  const edu = profile.education[0]; // Fill most recent education
+  if (!edu) return results;
+
+  const eduFields = [
+    { name: "School", labels: ["school", "university", "institution", "college", "school name"], value: edu.school },
+    { name: "Degree", labels: ["degree", "level of education", "education level", "degree type"], value: edu.degree },
+    { name: "Field of Study", labels: ["field of study", "major", "discipline", "area of study", "concentration"], value: edu.fieldOfStudy },
+    { name: "Graduation Year", labels: ["graduation", "grad year", "year", "end date", "completion"], value: edu.graduationYear },
+    { name: "GPA", labels: ["gpa", "grade", "cgpa", "grade point"], value: edu.gpa },
+  ];
+
+  for (const field of eduFields) {
+    if (!field.value) continue;
+    let el = null;
+    for (const label of field.labels) {
+      el = findFieldByLabel(label);
+      if (el) break;
+    }
+    if (el && !el.value) {
+      const filled = setFieldValue(el, field.value);
+      if (filled) results.push({ name: field.name, filled: true });
+    }
+  }
+
+  return results;
+}
+
+// ─── Fill work experience fields ─────────────────────────────────────────────
+function fillExperienceFields(profile) {
+  const results = [];
+  if (!profile.experience || profile.experience.length === 0) return results;
+
+  // Click "Add Experience" button if present
+  const addBtns = document.querySelectorAll("button, a");
+  for (const btn of addBtns) {
+    const text = (btn.textContent || "").toLowerCase().trim();
+    if (text.includes("add experience") || text.includes("add work") || text.includes("add position") || text.includes("add employment")) {
+      const existing = findFieldByLabel("company name") || findFieldByLabel("employer");
+      if (!existing) {
+        btn.click();
+        break;
+      }
+    }
+  }
+
+  const exp = profile.experience[0]; // Fill most recent experience
+  if (!exp) return results;
+
+  const expFields = [
+    { name: "Company Name", labels: ["company", "employer", "company name", "organization", "employer name"], value: exp.company },
+    { name: "Job Title", labels: ["job title", "title", "position", "role", "position title"], value: exp.title },
+    { name: "Start Date", labels: ["start date", "from", "start"], value: exp.startDate },
+    { name: "End Date", labels: ["end date", "to", "end"], value: exp.endDate },
+    { name: "Job Description", labels: ["description", "responsibilities", "duties", "job description", "role description"], value: exp.description },
+    { name: "Job Location", labels: ["work location", "job location"], value: exp.location },
+  ];
+
+  for (const field of expFields) {
+    if (!field.value) continue;
+    let el = null;
+    for (const label of field.labels) {
+      el = findFieldByLabel(label);
+      if (el) break;
+    }
+    if (el && !el.value) {
+      const filled = setFieldValue(el, field.value);
+      if (filled) results.push({ name: field.name, filled: true });
+    }
+  }
+
+  return results;
+}
+
+// ─── Fill skills fields ──────────────────────────────────────────────────────
+function fillSkillsFields(profile) {
+  const results = [];
+  if (!profile.skills || profile.skills.length === 0) return results;
+
+  // Pattern 1: Tag-style inputs (type skill + press Enter)
+  const skillInput = findFieldByLabel("skills") || findFieldByLabel("add skill") || findFieldByLabel("skill");
+  if (skillInput && skillInput.tagName === "INPUT" && !skillInput.value) {
+    // Check if this is a tag input (usually has a container with existing tags)
+    const container = skillInput.closest("[class*='tag'], [class*='skill'], [class*='chip'], [class*='token']");
+    if (container) {
+      // Tag input — enter skills one by one
+      for (const skill of profile.skills.slice(0, 10)) { // Limit to 10 to avoid spam
+        skillInput.focus();
+        setFieldValue(skillInput, skill);
+        skillInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+        skillInput.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", bubbles: true }));
+        skillInput.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+      }
+      results.push({ name: "Skills (tags)", filled: true });
+    } else {
+      // Simple text input — join skills with commas
+      const filled = setFieldValue(skillInput, profile.skills.join(", "));
+      if (filled) results.push({ name: "Skills", filled: true });
+    }
+  }
+
+  // Pattern 2: Multi-select dropdown
+  const skillSelect = document.querySelector("select[name*='skill'], select[id*='skill']");
+  if (skillSelect && skillSelect.multiple) {
+    const options = Array.from(skillSelect.options);
+    let matched = 0;
+    for (const skill of profile.skills) {
+      const skillLower = skill.toLowerCase();
+      const option = options.find(o =>
+        o.text.toLowerCase().includes(skillLower) || o.value.toLowerCase().includes(skillLower)
+      );
+      if (option) {
+        option.selected = true;
+        matched++;
+      }
+    }
+    if (matched > 0) {
+      skillSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      results.push({ name: `Skills (${matched} selected)`, filled: true });
+    }
+  }
+
+  // Pattern 3: Checkbox list of skills
+  const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+  let skillCheckboxCount = 0;
+  for (const cb of checkboxes) {
+    if (cb.checked) continue;
+    const labelText = getLabelForElement(cb).toLowerCase();
+    // Only match if the checkbox is in a skills-related section
+    const section = cb.closest("[class*='skill'], [class*='competenc'], fieldset");
+    if (!section) continue;
+
+    for (const skill of profile.skills) {
+      if (labelText.includes(skill.toLowerCase()) || skill.toLowerCase().includes(labelText)) {
+        setCheckboxValue(cb, true);
+        skillCheckboxCount++;
+        break;
+      }
+    }
+  }
+  if (skillCheckboxCount > 0) {
+    results.push({ name: `Skills (${skillCheckboxCount} checked)`, filled: true });
+  }
+
+  return results;
+}
+
 // ─── Generic field filler (works across most ATS) ────────────────────────────
 function fillGenericFields(pack, profile) {
   const results = [];
@@ -184,7 +640,7 @@ function fillGenericFields(pack, profile) {
     { name: "Last Name", labels: ["last name", "last_name", "lastname", "surname", "family name"], value: profile.lastName },
     { name: "Full Name", labels: ["full name", "name", "your name"], value: `${profile.firstName || ""} ${profile.lastName || ""}`.trim() },
     { name: "Email", labels: ["email", "e-mail", "email address"], value: profile.email },
-    { name: "Phone", labels: ["phone", "telephone", "mobile", "phone number"], value: profile.phone },
+    { name: "Phone", labels: ["phone", "telephone", "mobile", "phone number", "cell"], value: profile.phone },
     { name: "Location", labels: ["location", "city", "address"], value: profile.location },
     { name: "LinkedIn", labels: ["linkedin", "linkedin url", "linkedin profile"], value: profile.linkedin },
     { name: "Website", labels: ["website", "portfolio", "personal website", "github"], value: profile.website },
@@ -204,6 +660,26 @@ function fillGenericFields(pack, profile) {
       results.push({ name: field.name, filled });
     }
   }
+
+  // Address fields
+  const addressResults = fillAddressFields(profile);
+  results.push(...addressResults);
+
+  // Education fields
+  const eduResults = fillEducationFields(profile);
+  results.push(...eduResults);
+
+  // Experience fields
+  const expResults = fillExperienceFields(profile);
+  results.push(...expResults);
+
+  // Skills
+  const skillResults = fillSkillsFields(profile);
+  results.push(...skillResults);
+
+  // Common radio/checkbox questions (work auth, sponsorship, etc.)
+  const questionResults = fillCommonQuestions(profile, pack);
+  results.push(...questionResults);
 
   // Cover letter / additional info
   if (pack.cover_letter) {
@@ -266,6 +742,21 @@ function fillGreenhouse(pack, profile) {
     }
   }
 
+  // Address fields
+  results.push(...fillAddressFields(profile));
+
+  // Education
+  results.push(...fillEducationFields(profile));
+
+  // Experience
+  results.push(...fillExperienceFields(profile));
+
+  // Skills
+  results.push(...fillSkillsFields(profile));
+
+  // Common questions (work auth, etc.)
+  results.push(...fillCommonQuestions(profile, pack));
+
   // Cover letter
   const coverLetterField = findFieldByLabel("cover letter") ||
     document.querySelector("[name*='cover_letter'], [id*='cover_letter'], textarea[name*='letter']");
@@ -319,6 +810,13 @@ function fillLever(pack, profile) {
     }
   }
 
+  // Address, education, experience, skills, common questions
+  results.push(...fillAddressFields(profile));
+  results.push(...fillEducationFields(profile));
+  results.push(...fillExperienceFields(profile));
+  results.push(...fillSkillsFields(profile));
+  results.push(...fillCommonQuestions(profile, pack));
+
   const additionalField = findFieldByLabel("additional") ||
     document.querySelector("textarea[name*='comments'], textarea[name*='additional']");
   if (additionalField && pack.cover_letter && !additionalField.value) {
@@ -337,8 +835,11 @@ function fillWorkday(pack, profile) {
     { name: "Last Name", selectors: ["[data-automation-id='legalNameSection_lastName'] input", "[data-automation-id='lastName'] input"], value: profile.lastName },
     { name: "Email", selectors: ["[data-automation-id='email'] input", "[type='email']"], value: profile.email },
     { name: "Phone", selectors: ["[data-automation-id='phone'] input", "[type='tel']"], value: profile.phone },
-    { name: "Address", selectors: ["[data-automation-id='addressSection_addressLine1'] input"], value: profile.address },
+    { name: "Address Line 1", selectors: ["[data-automation-id='addressSection_addressLine1'] input"], value: profile.address },
     { name: "City", selectors: ["[data-automation-id='addressSection_city'] input"], value: profile.city },
+    { name: "State", selectors: ["[data-automation-id='addressSection_countryRegion'] select", "[data-automation-id='addressSection_region'] select", "[data-automation-id='addressSection_region'] input"], value: profile.state },
+    { name: "Zip Code", selectors: ["[data-automation-id='addressSection_postalCode'] input"], value: profile.zip },
+    { name: "Country", selectors: ["[data-automation-id='addressSection_country'] select", "[data-automation-id='country'] select"], value: profile.country },
   ];
 
   for (const field of fieldMap) {
@@ -354,6 +855,39 @@ function fillWorkday(pack, profile) {
       results.push({ name: field.name, filled });
     }
   }
+
+  // Workday experience section
+  const wdExpFields = [
+    { name: "Job Title", selectors: ["[data-automation-id='jobTitle'] input"], value: profile.experience?.[0]?.title },
+    { name: "Company", selectors: ["[data-automation-id='company'] input"], value: profile.experience?.[0]?.company },
+  ];
+  for (const field of wdExpFields) {
+    if (!field.value) continue;
+    let el = null;
+    for (const sel of field.selectors) { el = document.querySelector(sel); if (el) break; }
+    if (el && !el.value) {
+      const filled = setFieldValue(el, field.value);
+      results.push({ name: field.name, filled });
+    }
+  }
+
+  // Workday education section
+  const wdEduFields = [
+    { name: "School", selectors: ["[data-automation-id='school'] input", "[data-automation-id='schoolName'] input"], value: profile.education?.[0]?.school },
+    { name: "Degree", selectors: ["[data-automation-id='degree'] select", "[data-automation-id='degree'] input"], value: profile.education?.[0]?.degree },
+  ];
+  for (const field of wdEduFields) {
+    if (!field.value) continue;
+    let el = null;
+    for (const sel of field.selectors) { el = document.querySelector(sel); if (el) break; }
+    if (el && !el.value) {
+      const filled = setFieldValue(el, field.value);
+      results.push({ name: field.name, filled });
+    }
+  }
+
+  // Common questions
+  results.push(...fillCommonQuestions(profile, pack));
 
   return results;
 }
@@ -379,6 +913,67 @@ function fillLinkedIn(pack, profile) {
     else if ((lowerLabel.includes("website") || lowerLabel.includes("portfolio")) && profile.website) {
       setFieldValue(field, profile.website);
       results.push({ name: "Website", filled: true });
+    }
+    // City
+    else if (lowerLabel.includes("city") && profile.city) {
+      setFieldValue(field, profile.city);
+      results.push({ name: "City", filled: true });
+    }
+    // Address
+    else if (lowerLabel.includes("address") && !lowerLabel.includes("email") && profile.address) {
+      setFieldValue(field, profile.address);
+      results.push({ name: "Address", filled: true });
+    }
+    // LinkedIn-specific: years of experience questions
+    else if (lowerLabel.includes("years") && lowerLabel.includes("experience") && profile.experience?.length > 0) {
+      // Estimate years from experience duration
+      setFieldValue(field, profile.experience[0].duration || "3");
+      results.push({ name: "Years of Experience", filled: true });
+    }
+    // Education
+    else if (lowerLabel.includes("degree") && profile.education?.[0]?.degree) {
+      setFieldValue(field, profile.education[0].degree);
+      results.push({ name: "Degree", filled: true });
+    }
+    else if (lowerLabel.includes("school") && profile.education?.[0]?.school) {
+      setFieldValue(field, profile.education[0].school);
+      results.push({ name: "School", filled: true });
+    }
+    else if (lowerLabel.includes("gpa") && profile.education?.[0]?.gpa) {
+      setFieldValue(field, profile.education[0].gpa);
+      results.push({ name: "GPA", filled: true });
+    }
+  }
+
+  // LinkedIn radio buttons (work authorization, sponsorship, etc.)
+  const linkedInRadios = document.querySelectorAll(".jobs-easy-apply-form-section__grouping fieldset");
+  for (const fieldset of linkedInRadios) {
+    const legend = fieldset.querySelector("legend, label, span")?.textContent?.toLowerCase() || "";
+    const radios = fieldset.querySelectorAll('input[type="radio"]');
+    if (radios.length === 0) continue;
+
+    if (legend.includes("authorized") || legend.includes("authorization")) {
+      selectRadioByValue(radios, profile.workAuthorization ? "yes" : "no");
+      results.push({ name: "Work Authorization", filled: true });
+    } else if (legend.includes("sponsorship")) {
+      const noSponsorship = profile.workAuthorization &&
+        ["us citizen", "green card", "permanent resident"].some(v => (profile.workAuthorization || "").toLowerCase().includes(v));
+      selectRadioByValue(radios, noSponsorship ? "no" : "yes");
+      results.push({ name: "Visa Sponsorship", filled: true });
+    }
+  }
+
+  // LinkedIn select dropdowns in Easy Apply
+  const linkedInSelects = document.querySelectorAll(".jobs-easy-apply-form-section__grouping select");
+  for (const select of linkedInSelects) {
+    if (select.value && select.value !== "") continue;
+    const label = select.closest(".jobs-easy-apply-form-element")?.querySelector("label")?.textContent?.toLowerCase() || "";
+    if (label.includes("country") && profile.country) {
+      setFieldValue(select, profile.country);
+      results.push({ name: "Country", filled: true });
+    } else if (label.includes("state") && profile.state) {
+      setFieldValue(select, profile.state);
+      results.push({ name: "State", filled: true });
     }
   }
 
@@ -418,7 +1013,6 @@ function fillAshby(pack, profile) {
   const results = [];
 
   // Ashby uses standard HTML form inputs with labels
-  // The application form at ashbyhq.com has: name, email, phone, linkedin, resume upload, etc.
   const fieldMap = [
     { name: "First Name", labels: ["first name", "first_name", "given name"], value: profile.firstName },
     { name: "Last Name", labels: ["last name", "last_name", "family name", "surname"], value: profile.lastName },
@@ -443,6 +1037,13 @@ function fillAshby(pack, profile) {
       if (filled) results.push({ name: field.name, filled: true });
     }
   }
+
+  // Address, education, experience, skills, common questions
+  results.push(...fillAddressFields(profile));
+  results.push(...fillEducationFields(profile));
+  results.push(...fillExperienceFields(profile));
+  results.push(...fillSkillsFields(profile));
+  results.push(...fillCommonQuestions(profile, pack));
 
   // Ashby often has a "Cover Letter" or "Additional Information" textarea
   if (pack.cover_letter) {
@@ -702,8 +1303,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const inputs = document.querySelectorAll("input, textarea, select");
     for (const input of inputs) {
       if (input.type === "hidden" || input.type === "submit") continue;
-      const label = input.closest(".field, .form-group, [class*='field']")?.querySelector("label")?.textContent?.trim() ||
-        input.getAttribute("aria-label") || input.placeholder || input.name || input.id || "";
+      const label = getLabelForElement(input);
       fields.push({
         tag: input.tagName.toLowerCase(),
         type: input.type || "",
@@ -718,8 +1318,167 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // ─── Auto-Apply: Find and click the Apply button ─────────────────────────
+  if (message.action === "find_apply_button") {
+    const result = findAndClickApplyButton();
+    sendResponse(result);
+    return true;
+  }
+
+  // ─── Auto-Apply: Show review panel for user confirmation ─────────────────
+  if (message.action === "show_review_panel") {
+    showReviewPanel(message);
+    sendResponse({ shown: true });
+    return true;
+  }
+
   return true;
 });
+
+// ─── Apply button detection for auto-apply ──────────────────────────────────
+function findAndClickApplyButton() {
+  // Check if we're already on a form page (has multiple input fields)
+  const formInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], textarea');
+  if (formInputs.length >= 3) {
+    return { clicked: false, isFormPage: true, reason: "Already on application form" };
+  }
+
+  // Look for apply buttons by text content
+  const applyTexts = [
+    "apply now", "apply for this job", "apply", "quick apply", "easy apply",
+    "apply for this position", "apply to this job", "apply for role",
+    "submit application", "start application", "begin application",
+    "apply on company site", "apply on website", "apply externally",
+    "i'm interested", "express interest",
+  ];
+
+  // Search all clickable elements
+  const clickables = document.querySelectorAll('a, button, [role="button"], [role="link"], input[type="button"], input[type="submit"]');
+
+  for (const el of clickables) {
+    if (!isVisible(el)) continue;
+    const text = (el.textContent || el.value || el.getAttribute("aria-label") || "").trim().toLowerCase();
+
+    for (const applyText of applyTexts) {
+      if (text === applyText || text.includes(applyText)) {
+        console.log(`[JobAgent] Found apply button: "${text}"`);
+        el.click();
+        el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        return { clicked: true, isFormPage: false, buttonText: text, reason: `Clicked "${text}"` };
+      }
+    }
+  }
+
+  // LinkedIn-specific: Easy Apply button
+  const linkedInApply = document.querySelector(".jobs-apply-button, [data-control-name='jobdetail_apply'], .jobs-apply-button--top-card");
+  if (linkedInApply && isVisible(linkedInApply)) {
+    linkedInApply.click();
+    return { clicked: true, isFormPage: false, buttonText: "LinkedIn Easy Apply", reason: "Clicked LinkedIn Easy Apply" };
+  }
+
+  // Greenhouse: sometimes has an iframe or "Apply for this Job" link
+  const ghApply = document.querySelector("#submit_app, a[href*='#app'], .postings-btn");
+  if (ghApply && isVisible(ghApply)) {
+    ghApply.click();
+    return { clicked: true, isFormPage: false, buttonText: "Greenhouse Apply", reason: "Clicked Greenhouse apply button" };
+  }
+
+  // Check if the page itself is a CAPTCHA or blocker
+  const pageText = document.body.innerText.toLowerCase();
+  if (pageText.includes("captcha") || pageText.includes("verify you are human") || pageText.includes("i'm not a robot")) {
+    return { clicked: false, isFormPage: false, reason: "CAPTCHA detected — requires manual intervention" };
+  }
+
+  return { clicked: false, isFormPage: false, reason: "No apply button found on page" };
+}
+
+// ─── Review Panel for auto-apply review mode ─────────────────────────────────
+function showReviewPanel(data) {
+  // Remove existing panel
+  const existing = document.getElementById("jobagent-review-panel");
+  if (existing) existing.remove();
+
+  const { job, filledCount, resumeUploaded, queueRemaining } = data;
+
+  const panel = document.createElement("div");
+  panel.id = "jobagent-review-panel";
+  panel.innerHTML = `
+    <div style="
+      position: fixed; top: 20px; right: 20px; z-index: 999999;
+      width: 380px; background: #0a0a0a; border: 2px solid #818cf8;
+      border-radius: 16px; padding: 20px; box-shadow: 0 8px 32px rgba(129,140,248,0.3);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #e5e5e5;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <span style="font-weight:700; font-size:16px; color:#818cf8;">JobAgent Auto-Apply</span>
+        <span style="font-size:12px; color:#888;">${queueRemaining} more in queue</span>
+      </div>
+
+      <div style="background:#1a1a1a; border-radius:8px; padding:12px; margin-bottom:12px;">
+        <div style="font-weight:600; font-size:14px; margin-bottom:4px;">${job?.title || "Job"}</div>
+        <div style="font-size:12px; color:#888;">${job?.company || ""}</div>
+        ${job?.score ? `<div style="font-size:11px; color:#22c55e; margin-top:4px;">Match Score: ${job.score}%</div>` : ""}
+      </div>
+
+      <div style="font-size:12px; color:#ccc; margin-bottom:12px;">
+        <div style="color:#22c55e;">\u2713 ${filledCount || 0} fields filled</div>
+        <div style="color:${resumeUploaded ? '#22c55e' : '#f59e0b'};">${resumeUploaded ? '\u2713' : '\u25CB'} Resume ${resumeUploaded ? 'uploaded' : 'not uploaded'}</div>
+      </div>
+
+      <p style="font-size:11px; color:#888; margin-bottom:12px;">
+        Review the filled form above. Click Submit to apply, or Skip to move to the next job.
+      </p>
+
+      <div style="display:flex; gap:8px;">
+        <button id="jobagent-review-submit" style="
+          flex:1; padding:10px; background:#22c55e; color:#0a0a0a;
+          border:none; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer;
+        ">Submit Application</button>
+        <button id="jobagent-review-skip" style="
+          flex:1; padding:10px; background:#1a1a1a; color:#e5e5e5;
+          border:1px solid #333; border-radius:8px; font-weight:600; font-size:13px; cursor:pointer;
+        ">Skip</button>
+      </div>
+
+      <div id="jobagent-review-status" style="margin-top:8px; font-size:11px; color:#888; text-align:center;"></div>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  // Submit button
+  document.getElementById("jobagent-review-submit").addEventListener("click", async () => {
+    const statusEl = document.getElementById("jobagent-review-status");
+    statusEl.textContent = "Submitting...";
+    statusEl.style.color = "#818cf8";
+
+    const submitResult = await clickSubmitButton();
+
+    if (submitResult.submitted) {
+      statusEl.textContent = "Application submitted!";
+      statusEl.style.color = "#22c55e";
+
+      // Report to backend
+      if (data.pack) {
+        await reportSubmission(data.pack, filledCount, resumeUploaded);
+      }
+
+      // Notify background script (sender.tab.id will be used by background to identify the tab)
+      chrome.runtime.sendMessage({ action: "review_submitted" }).catch(() => {});
+
+      // Remove panel after delay
+      setTimeout(() => panel.remove(), 2000);
+    } else {
+      statusEl.textContent = "Submit button not found. Please submit manually.";
+      statusEl.style.color = "#f59e0b";
+    }
+  });
+
+  // Skip button
+  document.getElementById("jobagent-review-skip").addEventListener("click", () => {
+    chrome.runtime.sendMessage({ action: "review_skipped" }).catch(() => {});
+    panel.remove();
+  });
+}
 
 // ─── Inject floating "Auto-Fill" button on detected ATS pages ────────────────
 function injectFloatingButton() {
@@ -828,7 +1587,7 @@ function showInlinePanel() {
     const filled = fields.filter(f => f.filled).length;
 
     statusEl.innerHTML = `<span style="color:#22c55e;">Filled ${filled}/${fields.length} fields</span><br>` +
-      fields.map(f => `<span style="color:${f.filled ? '#22c55e' : '#f59e0b'};">${f.filled ? '✓' : '○'} ${f.name}</span>`).join("<br>");
+      fields.map(f => `<span style="color:${f.filled ? '#22c55e' : '#f59e0b'};">${f.filled ? '\u2713' : '\u25CB'} ${f.name}</span>`).join("<br>");
   });
 
   // Upload button
@@ -837,8 +1596,8 @@ function showInlinePanel() {
     statusEl.textContent = "Uploading resume...";
     const result = await attemptResumeUpload();
     statusEl.innerHTML = result.uploaded
-      ? '<span style="color:#22c55e;">✓ Resume uploaded successfully</span>'
-      : `<span style="color:#f59e0b;">○ ${result.reason}</span>`;
+      ? '<span style="color:#22c55e;">\u2713 Resume uploaded successfully</span>'
+      : `<span style="color:#f59e0b;">\u25CB ${result.reason}</span>`;
   });
 }
 
@@ -975,13 +1734,7 @@ function watchIndeedApplication() {
   setTimeout(() => clearInterval(interval), 30000);
 }
 
-// Override fillApplication to cache pack/profile for the observer
-const _originalFillApplication = fillApplication;
-// We can't reassign a function declaration, so we patch via the message handler instead.
-// The message handler already calls fillApplication — we just save the args.
-
 // Patch the message handler to cache pack/profile
-const originalListener = chrome.runtime.onMessage.hasListeners;
 chrome.runtime.onMessage.addListener((message) => {
   if (message.action === "fill_application") {
     lastFillPack = message.pack;
