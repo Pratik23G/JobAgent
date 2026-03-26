@@ -135,16 +135,26 @@ export async function POST(request: Request) {
   }
 
   if (!emails || emails.length === 0) {
+    // Still update scan metadata
+    await supabase.from("scan_metadata").upsert({
+      session_id: sessionId,
+      last_scanned_at: new Date().toISOString(),
+      emails_scanned: 0,
+      job_related: 0,
+      statuses_updated: 0,
+    }, { onConflict: "session_id" });
+
     return Response.json({ classified: [], totalEmails: 0, jobRelated: 0, statusesUpdated: 0 });
   }
 
   // Classify with Claude
   const classified = await classifyEmails(emails, knownCompanies);
 
-  // Update application statuses
+  // Update application statuses + persist scan results
   let updated = 0;
   for (const email of classified) {
     const newStatus = classificationToStatus(email.classification);
+    let linkedAppId: string | null = null;
 
     if (email.company) {
       const { data: matchedApps } = await supabase
@@ -155,6 +165,7 @@ export async function POST(request: Request) {
         .limit(1);
 
       const app = matchedApps?.[0];
+      linkedAppId = app?.id || null;
 
       if (app && newStatus && newStatus !== app.status) {
         await supabase
@@ -163,19 +174,34 @@ export async function POST(request: Request) {
           .eq("id", app.id);
         updated++;
       }
-
-      // Save to email_replies
-      await supabase.from("email_replies").insert({
-        user_id: userId,
-        from_email: email.fromEmail,
-        from_name: email.from,
-        subject: email.subject,
-        body: email.summary,
-        received_at: email.date ? new Date(email.date).toISOString() : new Date().toISOString(),
-        linked_application_id: app?.id || null,
-      });
     }
+
+    // Persist to email_scans (upsert to deduplicate by sender_email + subject)
+    const receivedAt = email.date ? new Date(email.date).toISOString() : new Date().toISOString();
+    await supabase.from("email_scans").upsert({
+      session_id: sessionId,
+      sender: email.from,
+      sender_email: email.fromEmail,
+      raw_subject: email.subject,
+      company: email.company || null,
+      role: email.jobTitle || null,
+      classification: email.classification,
+      confidence: email.confidence,
+      summary: email.summary,
+      action: email.action,
+      received_at: receivedAt,
+      linked_application_id: linkedAppId,
+    }, { onConflict: "session_id,sender_email,raw_subject" });
   }
+
+  // Save scan metadata
+  await supabase.from("scan_metadata").upsert({
+    session_id: sessionId,
+    last_scanned_at: new Date().toISOString(),
+    emails_scanned: emails.length,
+    job_related: classified.length,
+    statuses_updated: updated,
+  }, { onConflict: "session_id" });
 
   return Response.json({
     classified,
