@@ -522,6 +522,88 @@ async function attemptResumeUpload() {
   return { uploaded: success, reason: success ? "Resume uploaded" : "Upload failed" };
 }
 
+// ─── Submit button detection and click ──────────────────────────────────────
+
+function findSubmitButton() {
+  // Common submit button selectors across ATS platforms
+  const selectors = [
+    // Explicit submit buttons
+    'button[type="submit"]',
+    'input[type="submit"]',
+    // Text-based matches
+    'button[data-testid*="submit"]',
+    'button[data-automation-id*="submit"]',
+    // Ashby
+    'button[class*="submit"], button[class*="Submit"]',
+  ];
+
+  for (const sel of selectors) {
+    const btn = document.querySelector(sel);
+    if (btn && isVisible(btn)) return btn;
+  }
+
+  // Search by button text content
+  const buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+  const submitTexts = ["submit application", "submit", "apply now", "apply", "send application", "complete application"];
+
+  for (const btn of buttons) {
+    const text = (btn.textContent || btn.value || "").trim().toLowerCase();
+    if (submitTexts.some(t => text === t || text.startsWith(t)) && isVisible(btn)) {
+      return btn;
+    }
+  }
+
+  return null;
+}
+
+function isVisible(el) {
+  const style = window.getComputedStyle(el);
+  return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && el.offsetParent !== null;
+}
+
+async function clickSubmitButton() {
+  const btn = findSubmitButton();
+  if (!btn) return { submitted: false, reason: "No submit button found on page" };
+
+  const text = (btn.textContent || btn.value || "").trim();
+
+  // Click it
+  btn.focus();
+  btn.click();
+
+  // Also dispatch mouse events for React apps
+  btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+
+  return { submitted: true, buttonText: text, reason: `Clicked "${text}"` };
+}
+
+// Report confirmed submission to the backend
+async function reportSubmission(pack, filledCount, resumeUploaded) {
+  try {
+    const { serverUrl, sessionId } = await chrome.storage.local.get(["serverUrl", "sessionId"]);
+    const baseUrl = serverUrl || "http://localhost:3000";
+
+    const res = await fetch(`${baseUrl}/api/extension/confirm-submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        company: pack?.company || "",
+        jobTitle: pack?.title || pack?.job_title || "",
+        jobUrl: window.location.href,
+        sessionId: sessionId || "",
+        fieldsFilledCount: filledCount,
+        resumeUploaded: !!resumeUploaded,
+      }),
+    });
+
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    console.warn("[JobAgent] Failed to report submission:", err);
+    return { success: false, error: String(err) };
+  }
+}
+
 // ─── Message handler ────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "fill_application") {
@@ -553,6 +635,59 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === "upload_resume") {
     attemptResumeUpload().then(sendResponse);
+    return true;
+  }
+
+  // Submit the form (click the submit button)
+  if (message.action === "submit_application") {
+    (async () => {
+      const result = await clickSubmitButton();
+      if (result.submitted && message.pack) {
+        // Report to backend — mark as "applied"
+        const report = await reportSubmission(message.pack, message.filledCount || 0, message.resumeUploaded || false);
+        sendResponse({ ...result, report });
+      } else {
+        sendResponse(result);
+      }
+    })();
+    return true;
+  }
+
+  // Fill + Upload + Submit — all in one
+  if (message.action === "fill_and_submit") {
+    (async () => {
+      const { pack, profile, ats } = message;
+      const detectedAts = ats || detectATS();
+
+      // Step 1: Fill fields
+      const fields = fillApplication(pack, profile, detectedAts);
+      const filled = fields.filter(f => f.filled).length;
+
+      // Step 2: Upload resume
+      const upload = await attemptResumeUpload();
+      if (upload.uploaded) fields.push({ name: "Resume Upload", filled: true });
+
+      // Step 3: Wait a moment for form validation
+      await new Promise(r => setTimeout(r, 1000));
+
+      // Step 4: Click submit
+      const submit = await clickSubmitButton();
+
+      // Step 5: Report to backend if submitted
+      let report = null;
+      if (submit.submitted) {
+        report = await reportSubmission(pack, filled, upload.uploaded);
+      }
+
+      sendResponse({
+        fields,
+        filledCount: fields.filter(f => f.filled).length,
+        resumeUploaded: upload.uploaded,
+        submitted: submit.submitted,
+        submitReason: submit.reason,
+        report,
+      });
+    })();
     return true;
   }
 

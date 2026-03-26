@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 
 const statusColors: Record<string, string> = {
   applied: "bg-blue-500/10 text-blue-400 border-blue-500/30",
+  ready: "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
   interview: "bg-green-500/10 text-green-400 border-green-500/30",
-  offer: "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
+  offer: "bg-amber-500/10 text-amber-400 border-amber-500/30",
   rejected: "bg-red-500/10 text-red-400 border-red-500/30",
   ghosted: "bg-gray-500/10 text-gray-400 border-gray-500/30",
 };
@@ -91,7 +92,7 @@ export default function ApplicationsPage() {
     fetchApplications();
   };
 
-  const filters = ["all", "applied", "interview", "offer", "rejected", "ghosted"];
+  const filters = ["all", "ready", "applied", "interview", "offer", "rejected", "ghosted"];
 
   return (
     <div className="space-y-6">
@@ -162,7 +163,7 @@ export default function ApplicationsPage() {
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) => updateStatus(app.id, e.target.value)}
                   >
-                    {["applied", "interview", "offer", "rejected", "ghosted"].map(
+                    {["ready", "applied", "interview", "offer", "rejected", "ghosted"].map(
                       (s) => (
                         <option key={s} value={s}>{s}</option>
                       )

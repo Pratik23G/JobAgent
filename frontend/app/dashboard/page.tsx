@@ -33,6 +33,7 @@ interface AgentLog {
 }
 
 const STATUS_COLORS: Record<string, string> = {
+  ready: "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
   applied: "bg-blue-500/10 text-blue-400 border-blue-500/30",
   interview: "bg-green-500/10 text-green-400 border-green-500/30",
   offer: "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
@@ -72,7 +73,9 @@ export default function DashboardOverview() {
 
   // Check Gmail connection status
   useEffect(() => {
-    fetch("/api/gmail")
+    const sid = localStorage.getItem("jobagent_session_id") || "";
+    if (!sid) return;
+    fetch(`/api/gmail?sessionId=${sid}`)
       .then((r) => r.json())
       .then((data) => {
         setGmailConnected(data.connected);
@@ -105,16 +108,18 @@ export default function DashboardOverview() {
     }
   };
 
-  const total = applications.length;
+  const ready = applications.filter((a) => a.status === "ready").length;
+  const applied = applications.filter((a) => a.status === "applied").length;
   const interviews = applications.filter((a) => a.status === "interview").length;
   const offers = applications.filter((a) => a.status === "offer").length;
   const responded = applications.filter(
-    (a) => a.status !== "applied" && a.status !== "ghosted"
+    (a) => a.status !== "applied" && a.status !== "ready" && a.status !== "ghosted"
   ).length;
-  const responseRate = total > 0 ? `${Math.round((responded / total) * 100)}%` : "\u2014";
+  const responseRate = applied > 0 ? `${Math.round((responded / applied) * 100)}%` : "\u2014";
 
   const statCards = [
-    { label: "Applications", value: String(total), color: "text-accent" },
+    { label: "Ready to Apply", value: String(ready), color: "text-yellow-400" },
+    { label: "Applied", value: String(applied), color: "text-accent" },
     { label: "Interviews", value: String(interviews), color: "text-info" },
     { label: "Offers", value: String(offers), color: "text-warning" },
     { label: "Response Rate", value: responseRate, color: "text-muted" },
@@ -144,7 +149,7 @@ export default function DashboardOverview() {
       {/* Applications table */}
       {applications.length > 0 && (
         <div className="glass-card p-6">
-          <h2 className="mb-4 text-lg font-semibold">Applications ({total})</h2>
+          <h2 className="mb-4 text-lg font-semibold">Applications ({applications.length})</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>

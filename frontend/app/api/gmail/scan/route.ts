@@ -1,15 +1,11 @@
-// POST /api/gmail/scan — Scan Gmail for job-related emails, classify them,
+// POST /api/gmail/scan — Scan Gmail for job-related emails, classify with Claude,
 // and update application statuses in the database.
-//
-// Uses Claude to classify each email and match it to existing applications.
+// Per-user tokens from Supabase.
 
-import { fetchRecentEmails, refreshAccessToken } from "@/lib/gmail";
+import { fetchRecentEmails, getGmailTokens, refreshAndSaveToken } from "@/lib/gmail";
 import { getServiceClient } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
-import { readFile, writeFile } from "fs/promises";
-import { join } from "path";
 
-const TOKEN_FILE = join(process.cwd(), ".gmail-tokens.json");
 const anthropic = new Anthropic();
 
 interface ClassifiedEmail {
@@ -41,14 +37,14 @@ async function classifyEmails(
     max_tokens: 4096,
     messages: [{
       role: "user",
-      content: `Classify these emails related to job applications. I have applied to these companies: ${knownCompanies.join(", ") || "unknown"}.
+      content: `Classify these emails related to job applications. Known companies I've applied to: ${knownCompanies.join(", ") || "unknown"}.
 
 For each email, determine:
-1. classification: one of "application_confirmation", "interview_invitation", "rejection", "offer", "follow_up_request", "recruiter_outreach", "irrelevant"
-2. company: which company sent it (match to known companies if possible)
+1. classification: "application_confirmation", "interview_invitation", "rejection", "offer", "follow_up_request", "recruiter_outreach", or "irrelevant"
+2. company: which company sent it
 3. jobTitle: the job title if mentioned
-4. action: what the user should do ("schedule_interview", "respond", "accept_offer", "none", "follow_up")
-5. confidence: 0-100 how confident you are
+4. action: "schedule_interview", "respond", "accept_offer", "none", or "follow_up"
+5. confidence: 0-100
 6. summary: 1-sentence summary
 
 Return ONLY a JSON array:
@@ -57,7 +53,7 @@ Return ONLY a JSON array:
 Emails:
 ${emailSummaries}
 
-Return ONLY valid JSON array. Skip irrelevant emails (spam, newsletters, etc.) — mark them as "irrelevant" with confidence 100.`,
+Return ONLY valid JSON. Mark spam/newsletters/irrelevant as "irrelevant".`,
     }],
   });
 
@@ -89,13 +85,11 @@ Return ONLY valid JSON array. Skip irrelevant emails (spam, newsletters, etc.) �
   }
 }
 
-// Map email classification to application status
 function classificationToStatus(classification: string): string | null {
   switch (classification) {
     case "interview_invitation": return "interview";
     case "rejection": return "rejected";
     case "offer": return "offer";
-    case "application_confirmation": return "applied"; // Keep as applied
     default: return null;
   }
 }
@@ -103,73 +97,56 @@ function classificationToStatus(classification: string): string | null {
 export async function POST(request: Request) {
   const { sessionId } = await request.json();
 
-  // Load Gmail tokens
-  let tokens;
-  try {
-    const raw = await readFile(TOKEN_FILE, "utf-8");
-    tokens = JSON.parse(raw);
-  } catch {
-    return Response.json({ error: "Gmail not connected" }, { status: 401 });
+  if (!sessionId) {
+    return Response.json({ error: "Missing sessionId" }, { status: 400 });
   }
 
-  if (!tokens.access_token) {
-    return Response.json({ error: "No access token" }, { status: 401 });
+  // Get per-user Gmail tokens from Supabase
+  const tokens = await getGmailTokens(sessionId);
+  if (!tokens) {
+    return Response.json({ error: "Gmail not connected", connected: false }, { status: 401 });
   }
 
   const supabase = getServiceClient();
-  const userId = sessionId ? `anon_${sessionId}` : "";
+  const userId = `anon_${sessionId}`;
 
-  // Get known companies from applications
-  let knownCompanies: string[] = [];
-  if (userId) {
-    const { data: apps } = await supabase
-      .from("applications")
-      .select("company")
-      .eq("user_id", userId);
-    knownCompanies = [...new Set((apps || []).map((a) => a.company).filter(Boolean))];
-  } else {
-    const { data: apps } = await supabase
-      .from("applications")
-      .select("company")
-      .order("applied_at", { ascending: false })
-      .limit(50);
-    knownCompanies = [...new Set((apps || []).map((a) => a.company).filter(Boolean))];
-  }
+  // Get known companies
+  const { data: apps } = await supabase
+    .from("applications")
+    .select("company")
+    .eq("user_id", userId);
+  const knownCompanies = [...new Set((apps || []).map((a) => a.company).filter(Boolean))];
 
-  // Fetch recent emails
+  // Fetch emails — handle token refresh
   let emails;
   try {
     emails = await fetchRecentEmails(tokens.access_token, tokens.refresh_token);
-  } catch (err: unknown) {
-    // Try refresh
+  } catch {
     if (tokens.refresh_token) {
-      const newToken = await refreshAccessToken(tokens.refresh_token);
+      const newToken = await refreshAndSaveToken(sessionId, tokens.refresh_token);
       if (newToken) {
-        tokens.access_token = newToken;
-        await writeFile(TOKEN_FILE, JSON.stringify(tokens), "utf-8");
         emails = await fetchRecentEmails(newToken, tokens.refresh_token);
       } else {
-        return Response.json({ error: "Token refresh failed" }, { status: 401 });
+        return Response.json({ error: "Token refresh failed. Reconnect Gmail.", connected: false }, { status: 401 });
       }
     } else {
-      return Response.json({ error: "Gmail fetch failed: " + String(err) }, { status: 500 });
+      return Response.json({ error: "Gmail fetch failed. Reconnect Gmail.", connected: false }, { status: 500 });
     }
   }
 
   if (!emails || emails.length === 0) {
-    return Response.json({ classified: [], message: "No job-related emails found" });
+    return Response.json({ classified: [], totalEmails: 0, jobRelated: 0, statusesUpdated: 0 });
   }
 
   // Classify with Claude
   const classified = await classifyEmails(emails, knownCompanies);
 
-  // Update application statuses and save email replies
+  // Update application statuses
   let updated = 0;
   for (const email of classified) {
     const newStatus = classificationToStatus(email.classification);
 
-    // Try to match to existing application
-    if (email.company && userId) {
+    if (email.company) {
       const { data: matchedApps } = await supabase
         .from("applications")
         .select("id, status")
@@ -205,6 +182,5 @@ export async function POST(request: Request) {
     totalEmails: emails.length,
     jobRelated: classified.length,
     statusesUpdated: updated,
-    companies: knownCompanies,
   });
 }

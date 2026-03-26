@@ -691,7 +691,7 @@ Write it in first person, keep it under 300 words. Be specific about why this ca
           company,
           job_url,
           cover_letter: cover_letter || null,
-          status: "applied",
+          status: "ready",
         })
         .select()
         .single();
@@ -961,7 +961,7 @@ JSON format:
                   company: job.company,
                   job_url: job.url,
                   cover_letter: pack.cover_letter || null,
-                  status: "applied",
+                  status: "ready",
                   notes: `Auto-pipeline. Score: ${job.match_score}. Source: ${job.source || "adzuna"}`,
                 })
                 .select("id")
@@ -1162,7 +1162,7 @@ Return ONLY the JSON, no markdown fences.`,
               company,
               job_url: job_url || null,
               cover_letter: pack.cover_letter || null,
-              status: "applied",
+              status: "ready",
               notes: `Apply pack generated. Source: agent`,
             })
             .select("id")
@@ -1279,7 +1279,7 @@ Return ONLY the JSON, no markdown fences.`,
             job_title: plan.jobTitle,
             company: plan.company,
             job_url: plan.jobUrl,
-            status: "applied",
+            status: "ready",
           })
           .select()
           .single();
