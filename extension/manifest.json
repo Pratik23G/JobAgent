@@ -1,17 +1,16 @@
 {
   "manifest_version": 3,
   "name": "JobAgent Auto-Fill",
-  "version": "1.0.0",
-  "description": "Auto-fill job applications on Greenhouse, Lever, Workday and more using your JobAgent apply packs",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "version": "2.1.0",
+  "description": "Auto-fill job applications on any career page using your JobAgent apply packs",
+  "permissions": ["storage", "activeTab", "scripting", "alarms"],
   "host_permissions": [
-    "https://boards.greenhouse.io/*",
-    "https://jobs.greenhouse.io/*",
-    "https://jobs.lever.co/*",
-    "https://*.myworkdayjobs.com/*",
-    "https://*.myworkday.com/*",
+    "https://*/*",
     "http://localhost:3000/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
@@ -23,11 +22,19 @@
   "content_scripts": [
     {
       "matches": [
-        "https://boards.greenhouse.io/*/jobs/*",
-        "https://jobs.greenhouse.io/*/jobs/*",
+        "https://boards.greenhouse.io/*",
+        "https://jobs.greenhouse.io/*",
         "https://jobs.lever.co/*",
         "https://*.myworkdayjobs.com/*",
-        "https://*.myworkday.com/*"
+        "https://*.myworkday.com/*",
+        "https://www.linkedin.com/jobs/*",
+        "https://www.indeed.com/*",
+        "https://apply.workable.com/*",
+        "https://*.smartrecruiters.com/*",
+        "https://*.bamboohr.com/*",
+        "https://*.ashbyhq.com/*",
+        "https://*.icims.com/*",
+        "https://*.taleo.net/*"
       ],
       "js": ["content.js"],
       "css": ["content.css"],

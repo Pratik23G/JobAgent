@@ -51,6 +51,10 @@
     .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-secondary { background: #1a1a1a; color: #e5e5e5; border: 1px solid #333; margin-top: 8px; }
     .btn-secondary:hover { border-color: #818cf8; color: #818cf8; }
+    .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-row { display: flex; gap: 8px; margin-top: 8px; }
+    .btn-row button { flex: 1; }
 
     .field-list { font-size: 11px; color: #888; margin-top: 8px; }
     .field-list li { padding: 2px 0; list-style: none; }
@@ -69,6 +73,9 @@
       margin-top: 4px;
     }
     .settings label { font-size: 11px; color: #888; }
+
+    .sync-badge { font-size: 10px; color: #888; margin-top: 4px; text-align: center; }
+    .version { font-size: 10px; color: #555; text-align: center; margin-top: 12px; }
   </style>
 </head>
 <body>
@@ -88,18 +95,24 @@
   </div>
 
   <button id="fill-btn" class="btn-primary" disabled>Auto-Fill Application</button>
+  <button id="upload-btn" class="btn-secondary" disabled>Upload Resume PDF</button>
 
   <div id="fill-results" style="display:none;">
     <ul id="field-results" class="field-list"></ul>
   </div>
 
-  <button id="sync-btn" class="btn-secondary" style="margin-top:8px;">Sync Apply Packs from JobAgent</button>
-  <button id="open-agent" class="btn-secondary">Open JobAgent Dashboard</button>
+  <div class="btn-row">
+    <button id="sync-btn" class="btn-secondary">Sync Packs</button>
+    <button id="open-agent" class="btn-secondary">Open Dashboard</button>
+  </div>
+  <div id="sync-badge" class="sync-badge">Auto-syncs every 5 min</div>
 
   <div class="settings">
     <label>JobAgent URL</label>
     <input id="server-url" type="text" placeholder="http://localhost:3000" />
   </div>
+
+  <div class="version">v2.0.0 — Supports 8 ATS platforms</div>
 
   <script src="popup.js"></script>
 </body>

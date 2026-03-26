@@ -59,6 +59,34 @@ function Section({ title, content, label }: { title: string; content: string; la
 
 export default function ApplyPackCard({ pack }: { pack: ApplyPack }) {
   const [expanded, setExpanded] = useState(false);
+  const [sentToExt, setSentToExt] = useState(false);
+
+  // Push this specific pack to the extension via localStorage (extension syncs from here)
+  const sendToExtension = () => {
+    try {
+      // Get existing packs from localStorage
+      const stored = localStorage.getItem("jobagent_last_packs");
+      const existing: ApplyPack[] = stored ? JSON.parse(stored) : [];
+
+      // Put this pack at the front (most recent)
+      const deduped = [pack, ...existing.filter(
+        (p) => !(p.company === pack.company && p.title === pack.title)
+      )].slice(0, 20);
+
+      localStorage.setItem("jobagent_last_packs", JSON.stringify(deduped));
+
+      // Also trigger the extension sync endpoint to refresh
+      const sessionId = localStorage.getItem("jobagent_session_id");
+      if (sessionId) {
+        fetch(`/api/extension/sync?sessionId=${sessionId}`).catch(() => {});
+      }
+
+      setSentToExt(true);
+      setTimeout(() => setSentToExt(false), 3000);
+    } catch {
+      // Non-critical
+    }
+  };
 
   return (
     <div className="rounded-lg border border-card-border bg-card p-4 space-y-3">
@@ -84,14 +112,26 @@ export default function ApplyPackCard({ pack }: { pack: ApplyPack }) {
             </span>
           )}
         </div>
-        <a
-          href={pack.apply_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90"
-        >
-          Apply Now
-        </a>
+        <div className="flex flex-col gap-2 shrink-0">
+          <a
+            href={pack.apply_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90 text-center"
+          >
+            Apply Now
+          </a>
+          <button
+            onClick={sendToExtension}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+              sentToExt
+                ? "border-green-500/30 text-green-400 bg-green-500/10"
+                : "border-card-border text-muted hover:border-accent hover:text-accent"
+            }`}
+          >
+            {sentToExt ? "Sent!" : "Send to Extension"}
+          </button>
+        </div>
       </div>
 
       {/* Why good fit (always visible) */}

@@ -1,39 +1,61 @@
-// API endpoint for the Chrome extension to sync apply packs and user profile
-// GET /api/extension/sync — returns latest apply packs + parsed resume profile
+// GET /api/extension/sync — Extension pulls latest data
+// Reads from file cache first (written by POST /api/extension/push),
+// falls back to Supabase if cache is missing or stale.
 
+import { readFile } from "fs/promises";
+import { join } from "path";
 import { getServiceClient } from "@/lib/db";
 
+const CACHE_FILE = join(process.cwd(), ".extension-cache.json");
+
 export async function GET() {
-  // For now, return data from localStorage sync (sent via query params or extension storage)
-  // In production, this would use auth. For dev, we return the most recent data.
+  // Try file cache first (written by frontend via /api/extension/push)
+  try {
+    const raw = await readFile(CACHE_FILE, "utf-8");
+    const cache = JSON.parse(raw);
+
+    // Cache is valid if less than 1 hour old
+    if (cache.updatedAt && Date.now() - cache.updatedAt < 3600000) {
+      return Response.json({
+        packs: cache.packs || [],
+        profile: cache.profile || {},
+        resumeFileUrl: cache.resumeBlob || null,
+        hasResume: !!cache.resumeBlob,
+        source: "cache",
+      });
+    }
+  } catch {
+    // No cache file or invalid — fall through to Supabase
+  }
+
+  // Fall back to Supabase
   const supabase = getServiceClient();
 
   try {
-    // Get the most recent apply packs (across all users for dev; scoped by user in production)
     const { data: packs } = await supabase
       .from("apply_packs")
       .select("*")
       .order("created_at", { ascending: false })
       .limit(10);
 
-    // Get the most recent resume for profile extraction
     const { data: resume } = await supabase
       .from("resumes")
-      .select("parsed_json")
+      .select("parsed_json, file_url")
       .order("created_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     const parsed = resume?.parsed_json as {
       name?: string;
       email?: string;
       phone?: string;
+      linkedin?: string;
+      website?: string;
+      location?: string;
       skills?: string[];
       experience?: { title?: string; company?: string }[];
-      education?: { degree?: string; school?: string }[];
     } | null;
 
-    // Build a profile object the extension can use to fill forms
     const nameParts = (parsed?.name || "").split(" ");
     const profile = {
       firstName: nameParts[0] || "",
@@ -43,10 +65,12 @@ export async function GET() {
       currentCompany: parsed?.experience?.[0]?.company || "",
       currentTitle: parsed?.experience?.[0]?.title || "",
       skills: parsed?.skills || [],
-      linkedin: "", // User should set this in extension settings
-      website: "",
-      location: "",
+      linkedin: parsed?.linkedin || "",
+      website: parsed?.website || "",
+      location: parsed?.location || "",
     };
+
+    const resumeDataUri = resume?.file_url?.startsWith("data:") ? resume.file_url : null;
 
     return Response.json({
       packs: (packs || []).map(p => ({
@@ -60,9 +84,12 @@ export async function GET() {
         outreach_email: p.outreach_email,
       })),
       profile,
+      resumeFileUrl: resumeDataUri,
+      hasResume: !!resumeDataUri,
+      source: "supabase",
     });
   } catch (err) {
     console.error("Extension sync error:", err);
-    return Response.json({ packs: [], profile: {} });
+    return Response.json({ packs: [], profile: {}, hasResume: false, source: "error" });
   }
 }

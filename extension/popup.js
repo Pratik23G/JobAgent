@@ -1,4 +1,4 @@
-// popup.js — JobAgent Auto-Fill Extension
+// popup.js — JobAgent Auto-Fill Extension v2.1
 
 const DEFAULT_URL = "http://localhost:3000";
 
@@ -8,10 +8,29 @@ async function getServerUrl() {
 }
 
 async function getApplyPacks() {
-  // Get apply packs from localStorage of the JobAgent tab
-  // We'll use a content script message to the active tab, or fall back to storage
   const result = await chrome.storage.local.get("applyPacks");
   return result.applyPacks || [];
+}
+
+// Inject content script into a tab if not already present
+async function ensureContentScript(tabId) {
+  try {
+    // Try pinging the content script
+    await chrome.tabs.sendMessage(tabId, { action: "detect_ats" });
+    return true; // Already injected
+  } catch {
+    // Not injected — inject now
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+      await chrome.scripting.insertCSS({ target: { tabId }, files: ["content.css"] });
+      // Wait for script to initialize
+      await new Promise(r => setTimeout(r, 500));
+      return true;
+    } catch (err) {
+      console.error("Failed to inject content script:", err);
+      return false;
+    }
+  }
 }
 
 async function init() {
@@ -21,6 +40,7 @@ async function init() {
   const packSection = document.getElementById("pack-section");
   const packList = document.getElementById("pack-list");
   const fillBtn = document.getElementById("fill-btn");
+  const uploadBtn = document.getElementById("upload-btn");
   const fillResults = document.getElementById("fill-results");
   const fieldResults = document.getElementById("field-results");
   const openAgent = document.getElementById("open-agent");
@@ -30,36 +50,55 @@ async function init() {
   const serverUrl = await getServerUrl();
   serverUrlInput.value = serverUrl;
 
-  // Save URL on change
   serverUrlInput.addEventListener("change", () => {
     chrome.storage.local.set({ serverUrl: serverUrlInput.value.trim() || DEFAULT_URL });
   });
 
-  // Sync button
+  // Sync button — also syncs resume blob
   const syncBtn = document.getElementById("sync-btn");
   syncBtn.addEventListener("click", async () => {
     syncBtn.textContent = "Syncing...";
     syncBtn.disabled = true;
     try {
       const url = serverUrlInput.value.trim() || DEFAULT_URL;
-      const res = await fetch(`${url}/api/extension/sync`);
+      const { sessionId } = await chrome.storage.local.get("sessionId");
+      const syncUrl = sessionId
+        ? `${url}/api/extension/sync?sessionId=${sessionId}`
+        : `${url}/api/extension/sync`;
+
+      const res = await fetch(syncUrl);
       const data = await res.json();
-      if (data.packs) {
-        await chrome.storage.local.set({ applyPacks: data.packs });
-      }
+
+      // Store packs (replace, not merge)
+      await chrome.storage.local.set({ applyPacks: data.packs || [] });
+
+      // Store profile
       if (data.profile) {
         await chrome.storage.local.set({ userProfile: data.profile });
       }
-      syncBtn.textContent = `Synced ${data.packs?.length || 0} packs`;
-      // Refresh popup
-      setTimeout(() => location.reload(), 1000);
+
+      // Store resume blob for file upload
+      if (data.resumeFileUrl) {
+        await chrome.storage.local.set({
+          resumeBlob: data.resumeFileUrl,
+          resumeFileName: "resume.pdf",
+          resumeType: "application/pdf",
+        });
+        syncBtn.textContent = `Synced ${data.packs?.length || 0} packs + resume`;
+      } else if (data.needsReupload) {
+        syncBtn.textContent = `Synced ${data.packs?.length || 0} packs — RE-UPLOAD resume in Dashboard!`;
+      } else {
+        syncBtn.textContent = `Synced ${data.packs?.length || 0} packs (no resume found)`;
+      }
+      setTimeout(() => location.reload(), 1500);
     } catch (err) {
       syncBtn.textContent = "Sync failed — check URL";
+      console.error("Sync error:", err);
     }
     setTimeout(() => {
-      syncBtn.textContent = "Sync Apply Packs from JobAgent";
+      syncBtn.textContent = "Sync Packs";
       syncBtn.disabled = false;
-    }, 3000);
+    }, 4000);
   });
 
   // Open dashboard
@@ -67,30 +106,56 @@ async function init() {
     chrome.tabs.create({ url: `${serverUrlInput.value || DEFAULT_URL}/dashboard/agent` });
   });
 
-  // Check current tab for ATS detection
+  // Check current tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const url = tab?.url || "";
 
+  // Detect ATS
   let detectedATS = null;
-  if (/boards\.greenhouse\.io|jobs\.greenhouse\.io/i.test(url)) {
-    detectedATS = "Greenhouse";
-  } else if (/jobs\.lever\.co/i.test(url)) {
-    detectedATS = "Lever";
-  } else if (/myworkdayjobs\.com|myworkday\.com/i.test(url)) {
-    detectedATS = "Workday";
+  if (/boards\.greenhouse\.io|jobs\.greenhouse\.io/i.test(url)) detectedATS = "Greenhouse";
+  else if (/jobs\.lever\.co/i.test(url)) detectedATS = "Lever";
+  else if (/myworkdayjobs\.com|myworkday\.com/i.test(url)) detectedATS = "Workday";
+  else if (/linkedin\.com\/jobs/i.test(url)) detectedATS = "LinkedIn";
+  else if (/indeed\.com/i.test(url)) detectedATS = "Indeed";
+  else if (/apply\.workable\.com/i.test(url)) detectedATS = "Workable";
+  else if (/smartrecruiters\.com/i.test(url)) detectedATS = "SmartRecruiters";
+  else if (/bamboohr\.com/i.test(url)) detectedATS = "BambooHR";
+  else if (/ashbyhq\.com/i.test(url)) detectedATS = "Ashby";
+  else if (/icims\.com/i.test(url)) detectedATS = "iCIMS";
+  else if (/taleo\.net/i.test(url)) detectedATS = "Taleo";
+
+  // Check if it looks like a career/jobs page even if not a known ATS
+  if (!detectedATS && (
+    /career|jobs|apply|hiring|position|openings|opportunities|application/i.test(url) ||
+    /career|jobs|apply|hiring/i.test(tab?.title || "")
+  )) {
+    detectedATS = "Generic";
   }
+
+  // Check what data the extension has
+  const storageData = await chrome.storage.local.get(["resumeBlob", "userProfile"]);
+  const hasResume = !!storageData.resumeBlob;
+  const hasProfile = !!(storageData.userProfile?.firstName || storageData.userProfile?.email);
 
   if (detectedATS) {
     atsInfo.style.display = "block";
-    atsName.textContent = `${detectedATS} application detected`;
+    atsName.textContent = detectedATS === "Generic"
+      ? "Career page detected (generic fill)"
+      : `${detectedATS} application detected`;
     statusEl.className = "status connected";
-    statusEl.textContent = "Ready to auto-fill";
+    if (hasProfile && hasResume) {
+      statusEl.textContent = "Ready to auto-fill + upload resume";
+    } else if (hasProfile) {
+      statusEl.textContent = "Ready to auto-fill (no PDF for upload)";
+    } else {
+      statusEl.textContent = "Detected! Click Sync Packs to load your data.";
+    }
   } else {
     statusEl.className = "status disconnected";
-    statusEl.textContent = "Navigate to a job application page (Greenhouse, Lever, or Workday) to auto-fill";
+    statusEl.textContent = "Not on a job page, but you can still try filling.";
   }
 
-  // Load apply packs from extension storage
+  // Load packs
   const packs = await getApplyPacks();
 
   if (packs.length > 0) {
@@ -106,7 +171,6 @@ async function init() {
       div.style.cursor = "pointer";
       div.style.border = i === 0 ? "1px solid #818cf8" : "1px solid #333";
       div.addEventListener("click", () => {
-        // Select this pack
         document.querySelectorAll(".pack-item").forEach(el => el.style.border = "1px solid #333");
         div.style.border = "1px solid #818cf8";
         chrome.storage.local.set({ selectedPackIndex: i });
@@ -116,52 +180,119 @@ async function init() {
     chrome.storage.local.set({ selectedPackIndex: 0 });
   } else {
     packSection.style.display = "block";
-    packList.innerHTML = '<div class="pack-item"><div class="pack-title">No apply packs found. Generate one from the Agent first, then click "Sync Packs" below.</div></div>';
+    packList.innerHTML = '<div class="pack-item"><div class="pack-title">No apply packs found. Generate one from the Agent first, then click "Sync Packs".</div></div>';
   }
 
-  // Fill button
-  fillBtn.disabled = !detectedATS || packs.length === 0;
+  // ─── Fill button ───────────────────────────────────────────────────────────
+  fillBtn.disabled = packs.length === 0;
 
   fillBtn.addEventListener("click", async () => {
     fillBtn.disabled = true;
-    fillBtn.textContent = "Filling...";
+    fillBtn.textContent = "Injecting...";
 
     const { selectedPackIndex } = await chrome.storage.local.get("selectedPackIndex");
     const pack = packs[selectedPackIndex || 0];
-
     if (!pack) {
       fillBtn.textContent = "No pack selected";
+      setTimeout(() => { fillBtn.textContent = "Auto-Fill Application"; fillBtn.disabled = false; }, 2000);
       return;
     }
 
-    // Get user profile from storage
     const { userProfile } = await chrome.storage.local.get("userProfile");
 
-    // Send fill command to content script
-    const results = await chrome.tabs.sendMessage(tab.id, {
-      action: "fill_application",
-      pack,
-      profile: userProfile || {},
-      ats: detectedATS,
-    });
-
-    // Show results
-    fillResults.style.display = "block";
-    fieldResults.innerHTML = "";
-    if (results && results.fields) {
-      results.fields.forEach(field => {
-        const li = document.createElement("li");
-        li.className = field.filled ? "filled" : "missed";
-        li.textContent = `${field.filled ? "✓" : "○"} ${field.name}: ${field.filled ? "Filled" : "Not found"}`;
-        fieldResults.appendChild(li);
-      });
+    // Ensure content script is injected
+    const injected = await ensureContentScript(tab.id);
+    if (!injected) {
+      fillBtn.textContent = "Cannot inject — try refreshing page";
+      setTimeout(() => { fillBtn.textContent = "Auto-Fill Application"; fillBtn.disabled = false; }, 3000);
+      return;
     }
 
-    fillBtn.textContent = `Filled ${results?.filledCount || 0} fields`;
+    fillBtn.textContent = "Filling...";
+
+    try {
+      const results = await chrome.tabs.sendMessage(tab.id, {
+        action: "fill_application",
+        pack,
+        profile: userProfile || {},
+        ats: detectedATS || "Generic",
+      });
+
+      fillResults.style.display = "block";
+      fieldResults.innerHTML = "";
+      if (results?.fields) {
+        results.fields.forEach(field => {
+          const li = document.createElement("li");
+          li.className = field.filled ? "filled" : "missed";
+          li.textContent = `${field.filled ? "✓" : "○"} ${field.name}: ${field.filled ? "Filled" : "Not found"}`;
+          fieldResults.appendChild(li);
+        });
+      }
+      fillBtn.textContent = `Filled ${results?.filledCount || 0} fields`;
+    } catch (err) {
+      fillBtn.textContent = "Fill failed — " + (err.message || "unknown error");
+      console.error("Fill error:", err);
+    }
+
+    setTimeout(() => { fillBtn.textContent = "Auto-Fill Application"; fillBtn.disabled = false; }, 3000);
+  });
+
+  // ─── Upload resume button ─────────────────────────────────────────────────
+  uploadBtn.disabled = !hasResume;
+  if (!hasResume) {
+    uploadBtn.textContent = "No PDF attached — Attach in Dashboard";
+  }
+
+  uploadBtn.addEventListener("click", async () => {
+    if (!hasResume) {
+      uploadBtn.textContent = "Sync packs first to get resume";
+      setTimeout(() => { uploadBtn.textContent = "No Resume (Sync First)"; }, 2000);
+      return;
+    }
+
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "Injecting...";
+
+    const injected = await ensureContentScript(tab.id);
+    if (!injected) {
+      uploadBtn.textContent = "Cannot inject — try refreshing";
+      setTimeout(() => { uploadBtn.textContent = "Upload Resume PDF"; uploadBtn.disabled = false; }, 3000);
+      return;
+    }
+
+    uploadBtn.textContent = "Uploading...";
+
+    try {
+      const results = await chrome.tabs.sendMessage(tab.id, { action: "upload_resume" });
+
+      if (results?.uploaded) {
+        uploadBtn.textContent = "Resume Uploaded!";
+        uploadBtn.style.borderColor = "#22c55e";
+        uploadBtn.style.color = "#22c55e";
+      } else {
+        uploadBtn.textContent = results?.reason || "No file input found on page";
+        uploadBtn.style.borderColor = "#f59e0b";
+        uploadBtn.style.color = "#f59e0b";
+      }
+    } catch (err) {
+      uploadBtn.textContent = "Upload failed — " + (err.message || "error");
+      console.error("Upload error:", err);
+    }
+
     setTimeout(() => {
-      fillBtn.textContent = "Auto-Fill Application";
-      fillBtn.disabled = false;
+      uploadBtn.textContent = "Upload Resume PDF";
+      uploadBtn.disabled = false;
+      uploadBtn.style.borderColor = "";
+      uploadBtn.style.color = "";
     }, 3000);
+  });
+
+  // Listen for background events
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.action === "sync_complete" || message.action === "packs_updated") {
+      const badge = document.getElementById("sync-badge");
+      if (badge) badge.textContent = `Updated: ${message.count || message.newPacks || 0} packs`;
+    }
   });
 }
 

@@ -42,6 +42,18 @@ export default function VoiceAgent() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
+  // Voice output controls — default OFF (text only)
+  const [voiceEnabled, setVoiceEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("jobagent_voice_enabled") === "true";
+  });
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("jobagent_selected_voice") || "";
+  });
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
   // Persistent session ID — survives page navigation
   const [sessionId] = useState(() => {
     if (typeof window === "undefined") return "ssr";
@@ -107,6 +119,88 @@ export default function VoiceAgent() {
     };
   }, []);
 
+  // On mount, push existing localStorage data to extension sync cache
+  // This ensures the extension has data even from previous sessions
+  useEffect(() => {
+    const resumeStr = localStorage.getItem("jobagent_resume");
+    const resumeBlob = localStorage.getItem("jobagent_resume_blob");
+    const packsStr = localStorage.getItem("jobagent_last_packs");
+
+    if (resumeStr || packsStr) {
+      let profile = {};
+      if (resumeStr) {
+        try {
+          const r = JSON.parse(resumeStr);
+          const nameParts = (r.name || "").split(" ");
+          profile = {
+            firstName: nameParts[0] || "",
+            lastName: nameParts.slice(1).join(" ") || "",
+            email: r.email || "",
+            phone: r.phone || "",
+            linkedin: r.linkedin || "",
+            website: r.website || "",
+            location: r.location || "",
+            currentCompany: r.experience?.[0]?.company || "",
+            currentTitle: r.experience?.[0]?.title || "",
+            skills: r.skills || [],
+          };
+        } catch { /* ignore */ }
+      }
+
+      let packs: unknown[] = [];
+      if (packsStr) {
+        try { packs = JSON.parse(packsStr); } catch { /* ignore */ }
+      }
+
+      fetch("/api/extension/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile, resumeBlob, packs }),
+      }).catch(() => {});
+    }
+  }, []);
+
+  // Load available speech synthesis voices
+  useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length === 0) return;
+
+      // Filter for natural-sounding English voices
+      // Prefer: Google voices, Microsoft Neural voices, Apple voices
+      const englishVoices = voices.filter((v) =>
+        v.lang.startsWith("en") &&
+        !v.name.toLowerCase().includes("espeak") // exclude robotic espeak
+      );
+
+      // Rank by quality: Neural/Natural > Google > Microsoft > Others
+      const ranked = englishVoices.sort((a, b) => {
+        const score = (v: SpeechSynthesisVoice) => {
+          const n = v.name.toLowerCase();
+          if (n.includes("neural") || n.includes("natural")) return 4;
+          if (n.includes("google")) return 3;
+          if (n.includes("microsoft") && (n.includes("aria") || n.includes("jenny") || n.includes("guy"))) return 3;
+          if (n.includes("samantha") || n.includes("karen") || n.includes("daniel")) return 2; // Apple
+          return 1;
+        };
+        return score(b) - score(a);
+      });
+
+      setAvailableVoices(ranked.slice(0, 8)); // Show top 8 options
+
+      // Auto-select best voice if none saved
+      if (!selectedVoice && ranked.length > 0) {
+        setSelectedVoice(ranked[0].name);
+        localStorage.setItem("jobagent_selected_voice", ranked[0].name);
+      }
+    };
+
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }, [selectedVoice]);
+
   // Check speech API support + HTTPS requirement
   useEffect(() => {
     const SpeechRecognition =
@@ -142,6 +236,37 @@ export default function VoiceAgent() {
     }
   }, [voiceError]);
 
+  // Speak text with selected voice
+  const speakText = useCallback((text: string) => {
+    if (!("speechSynthesis" in window)) return;
+
+    window.speechSynthesis.cancel();
+    setIsSpeaking(true);
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.05; // Slightly faster than default, but not robotic
+    utterance.pitch = 1.0;
+    utterance.volume = 0.9;
+
+    // Apply selected voice
+    if (selectedVoice) {
+      const voice = window.speechSynthesis.getVoices().find((v) => v.name === selectedVoice);
+      if (voice) utterance.voice = voice;
+    }
+
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  }, [selectedVoice]);
+
+  const stopSpeaking = useCallback(() => {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+  }, []);
+
   const sendCommand = useCallback(
     async (command: string) => {
       if (!command.trim()) return;
@@ -175,11 +300,50 @@ export default function VoiceAgent() {
         // Persist last response so it survives page navigation
         localStorage.setItem("jobagent_last_response", response);
 
+        // If user just authenticated, migrate anonymous data (one-time)
+        if (data.authenticated && !localStorage.getItem("jobagent_migrated")) {
+          fetch("/api/auth/migrate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId }),
+          }).then(() => {
+            localStorage.setItem("jobagent_migrated", "true");
+          }).catch(() => {}); // Non-critical
+        }
+
         // Check if response contains apply packs (from auto_apply_pipeline or generate_apply_pack)
         const packs = data.applyPacks || [];
         if (packs.length > 0) {
           setApplyPacks(packs);
           localStorage.setItem("jobagent_last_packs", JSON.stringify(packs));
+
+          // Push packs to extension sync cache so extension gets them immediately
+          const resumeBlob = localStorage.getItem("jobagent_resume_blob") || null;
+          const resumeStr = localStorage.getItem("jobagent_resume");
+          let profile = {};
+          if (resumeStr) {
+            try {
+              const r = JSON.parse(resumeStr);
+              const nameParts = (r.name || "").split(" ");
+              profile = {
+                firstName: nameParts[0] || "",
+                lastName: nameParts.slice(1).join(" ") || "",
+                email: r.email || "",
+                phone: r.phone || "",
+                linkedin: r.linkedin || "",
+                website: r.website || "",
+                location: r.location || "",
+                currentCompany: r.experience?.[0]?.company || "",
+                currentTitle: r.experience?.[0]?.title || "",
+                skills: r.skills || [],
+              };
+            } catch { /* ignore */ }
+          }
+          fetch("/api/extension/push", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ packs, profile, resumeBlob }),
+          }).catch(() => {}); // Non-critical
         } else {
           localStorage.removeItem("jobagent_last_packs");
         }
@@ -205,13 +369,9 @@ export default function VoiceAgent() {
           return updated;
         });
 
-        // Cancel any queued speech, then read aloud
-        if ("speechSynthesis" in window) {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(response);
-          utterance.rate = 1.1;
-          utterance.pitch = 1;
-          window.speechSynthesis.speak(utterance);
+        // Only speak if voice output is enabled
+        if (voiceEnabled && "speechSynthesis" in window) {
+          speakText(response);
         }
       } catch (err) {
         setAgentResponse(`Error: ${err instanceof Error ? err.message : "Something went wrong"}`);
@@ -219,7 +379,7 @@ export default function VoiceAgent() {
         setIsThinking(false);
       }
     },
-    [resumeData, sessionId]
+    [resumeData, sessionId, voiceEnabled, speakText]
   );
 
   const stopListening = useCallback(() => {
@@ -480,9 +640,38 @@ export default function VoiceAgent() {
       {/* Agent Response */}
       {(agentResponse || isThinking) && (
         <div className="glass-card p-4" ref={responseRef}>
-          <p className="mb-1 text-xs font-medium text-muted uppercase tracking-wider">
-            Agent Response
-          </p>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs font-medium text-muted uppercase tracking-wider">
+              Agent Response
+            </p>
+            {/* Read aloud button — only shows after response, not while thinking */}
+            {agentResponse && !isThinking && (
+              <button
+                onClick={() => isSpeaking ? stopSpeaking() : speakText(agentResponse)}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition ${
+                  isSpeaking
+                    ? "bg-accent/20 text-accent"
+                    : "bg-card border border-card-border text-muted hover:text-accent hover:border-accent"
+                }`}
+              >
+                {isSpeaking ? (
+                  <>
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-accent animate-pulse" />
+                    Stop
+                  </>
+                ) : (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                    </svg>
+                    Read Aloud
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           {isThinking ? (
             <p className="font-mono text-sm text-accent">
               Processing
@@ -495,6 +684,66 @@ export default function VoiceAgent() {
           )}
         </div>
       )}
+
+      {/* Voice Settings Bar */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Auto-speak toggle */}
+        <button
+          onClick={() => {
+            const next = !voiceEnabled;
+            setVoiceEnabled(next);
+            localStorage.setItem("jobagent_voice_enabled", String(next));
+            if (!next) stopSpeaking();
+          }}
+          className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+            voiceEnabled
+              ? "bg-accent/15 text-accent border border-accent/30"
+              : "bg-card border border-card-border text-muted hover:text-foreground"
+          }`}
+        >
+          {voiceEnabled ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+              <line x1="23" y1="9" x2="17" y2="15" />
+              <line x1="17" y1="9" x2="23" y2="15" />
+            </svg>
+          )}
+          {voiceEnabled ? "Auto-Speak On" : "Auto-Speak Off"}
+        </button>
+
+        {/* Voice selector */}
+        {availableVoices.length > 0 && (
+          <select
+            value={selectedVoice}
+            onChange={(e) => {
+              setSelectedVoice(e.target.value);
+              localStorage.setItem("jobagent_selected_voice", e.target.value);
+              // Preview the voice
+              if ("speechSynthesis" in window) {
+                window.speechSynthesis.cancel();
+                const utt = new SpeechSynthesisUtterance("Hey, I'm your JobAgent.");
+                const voice = window.speechSynthesis.getVoices().find((v) => v.name === e.target.value);
+                if (voice) utt.voice = voice;
+                utt.rate = 1.05;
+                window.speechSynthesis.speak(utt);
+              }
+            }}
+            className="rounded-full border border-card-border bg-card px-3 py-1.5 text-xs text-muted focus:border-accent focus:outline-none"
+          >
+            {availableVoices.map((v) => (
+              <option key={v.name} value={v.name}>
+                {v.name.replace(/Microsoft |Google |Apple /, "").replace(/ Online \(Natural\)/, "")}
+                {v.name.toLowerCase().includes("neural") || v.name.toLowerCase().includes("natural") ? " *" : ""}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
 
       {/* Action buttons after job search results (when no apply packs yet) */}
       {agentResponse && !isThinking && applyPacks.length === 0 && /\b(jobs?|positions?|roles?|openings?)\b/i.test(agentResponse) && (

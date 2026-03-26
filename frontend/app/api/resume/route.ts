@@ -70,7 +70,16 @@ Return ONLY the JSON, no markdown, no explanation.`,
     });
   }
 
-  // Store in Supabase (only if authenticated)
+  // Derive userId from auth or sessionId (same pattern as agent route)
+  const sessionId = formData.get("sessionId") as string | null;
+  if (!userId && sessionId) {
+    userId = `anon_${sessionId}`;
+  }
+
+  // Store the resume base64 as a data URI so the extension can use it for ATS upload
+  const resumeDataUri = `data:application/pdf;base64,${base64}`;
+
+  // Store in Supabase (always — auth or anonymous)
   if (userId) {
     const supabase = getServiceClient();
     const { error: dbError } = await supabase.from("resumes").upsert(
@@ -78,15 +87,15 @@ Return ONLY the JSON, no markdown, no explanation.`,
         user_id: userId,
         raw_text: rawText,
         parsed_json: parsed,
+        file_url: resumeDataUri,
       },
       { onConflict: "user_id" }
     );
 
     if (dbError) {
       console.error("Supabase error:", dbError);
-      // Still return the parsed data even if DB save fails
     }
   }
 
-  return Response.json({ parsed });
+  return Response.json({ parsed, resumeBase64: resumeDataUri });
 }

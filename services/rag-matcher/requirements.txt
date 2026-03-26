@@ -1,0 +1,10 @@
+flask==3.1.1
+pypdf==5.6.0
+sentence-transformers==4.1.0
+numpy==2.2.6
+anthropic==0.52.0
+requests==2.32.3
+python-dotenv==1.1.0
+gunicorn==23.0.0
+chromadb==1.0.7
+pytest==8.4.0

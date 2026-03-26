@@ -189,6 +189,59 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
       required: ["job_title", "company", "job_description", "resume_summary"],
     },
   },
+  // ─── Orchestration tools (Mother Agent → Sub-Agents) ──────────────────────
+  {
+    name: "orchestrate_application",
+    description:
+      "Launch the full application orchestration pipeline for a specific job. Sub-agents will: parse resume, score match, prepare documents, and map form fields. Returns a plan that needs human confirmation before final submit. Use this when the user wants to apply to a specific job with full automation.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        job_title: { type: "string", description: "Job title" },
+        company: { type: "string", description: "Company name" },
+        job_url: { type: "string", description: "Direct apply URL" },
+        job_description: { type: "string", description: "Job description text" },
+      },
+      required: ["job_title", "company", "job_url", "job_description"],
+    },
+  },
+  {
+    name: "confirm_application",
+    description:
+      "User has reviewed and confirmed the application plan. Proceed with recording the application and sending data to the browser extension for form filling. Only call this AFTER orchestrate_application and the user has confirmed.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        plan_id: { type: "string", description: "The session-based plan ID to confirm" },
+        modifications: {
+          type: "string",
+          description: "Any modifications the user requested before confirming (optional)",
+        },
+      },
+      required: ["plan_id"],
+    },
+  },
+  {
+    name: "delegate_to_subagent",
+    description:
+      "Delegate a specific task to a specialized sub-agent. Available agents: resume_parser (extract structured data from resume), job_matcher (score and rank jobs against resume), form_filler (map candidate data to form fields), document_manager (select and prepare documents). Use this for one-off sub-agent tasks outside the full orchestration pipeline.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        agent: {
+          type: "string",
+          enum: ["resume_parser", "job_matcher", "form_filler", "document_manager"],
+          description: "Which sub-agent to delegate to",
+        },
+        task: { type: "string", description: "What to ask the sub-agent to do" },
+        context: {
+          type: "object",
+          description: "Additional context to pass to the sub-agent (resume data, job info, etc.)",
+        },
+      },
+      required: ["agent", "task"],
+    },
+  },
 ];
 
 export function buildSystemPrompt(context: {
@@ -252,7 +305,23 @@ ${context.sessionSummary}`);
 - You have memory of prior messages. If the user references something from earlier (like "those jobs" or "the first one"), look at the conversation history to understand what they mean.
 - IMPORTANT: After showing job search results, ALWAYS ask the user if they want you to generate apply packs. Say something like "Want me to generate apply packs for any of these? Just say 'apply to the top 3' or 'prepare apply pack for [company name]'."
 - When the user says "find jobs" or "search jobs", search first, show results, then IMMEDIATELY call generate_apply_pack for the top 3 results automatically. The user wants to apply, not just browse.
-- When generating apply packs, always use generate_apply_pack (for single jobs) or auto_apply_pipeline (for batch). These create the rich apply pack cards the user can interact with.`);
+- When generating apply packs, always use generate_apply_pack (for single jobs) or auto_apply_pipeline (for batch). These create the rich apply pack cards the user can interact with.
+
+## Agent Orchestration
+You are the MOTHER AGENT. You coordinate specialized sub-agents to automate the job application process end-to-end.
+
+Sub-agents available:
+- **resume_parser**: Extracts structured data from resumes (skills, experience, education)
+- **job_matcher**: Scores jobs against candidate profile with detailed justification
+- **form_filler**: Maps candidate data to ATS form fields for auto-fill
+- **document_manager**: Selects and prepares documents (resume, cover letter) per job
+
+Orchestration rules:
+1. When user wants to apply to a specific job, use orchestrate_application — it runs all sub-agents in sequence
+2. ALWAYS pause for human confirmation before final submission (confirm_application)
+3. Show the user what will be filled and any fields needing manual input
+4. For one-off tasks (e.g., "parse my resume"), use delegate_to_subagent directly
+5. The extension will receive form-fill data via the apply pack — tell the user to click "Auto-Fill" in the extension after confirming`);
 
   return parts.join("\n");
 }
