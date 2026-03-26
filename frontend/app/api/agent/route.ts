@@ -1321,6 +1321,47 @@ Return ONLY the JSON, no markdown fences.`,
       return JSON.stringify(result);
     }
 
+    case "scan_gmail": {
+      try {
+        // Call the gmail scan endpoint internally
+        const sessionId = userId.startsWith("anon_") ? userId.slice(5) : "";
+        const scanRes = await fetch(`http://localhost:${process.env.PORT || 3000}/api/gmail/scan`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+        });
+        const scanData = await scanRes.json();
+
+        if (scanData.error) {
+          return JSON.stringify({
+            error: scanData.error,
+            message: scanData.error.includes("not connected")
+              ? "Gmail is not connected yet. Tell the user to go to the Dashboard and click 'Connect Gmail' first."
+              : scanData.error,
+          });
+        }
+
+        return JSON.stringify({
+          total_emails_scanned: scanData.totalEmails,
+          job_related: scanData.jobRelated,
+          statuses_updated: scanData.statusesUpdated,
+          emails: scanData.classified?.map((e: Record<string, unknown>) => ({
+            company: e.company,
+            classification: e.classification,
+            subject: e.subject,
+            action: e.action,
+            summary: e.summary,
+            date: e.date,
+          })),
+          message: scanData.jobRelated > 0
+            ? `Found ${scanData.jobRelated} job-related emails. Updated ${scanData.statusesUpdated} application statuses.`
+            : "No new job-related emails found in the last 30 days.",
+        });
+      } catch (err) {
+        return JSON.stringify({ error: "Gmail scan failed: " + String(err) });
+      }
+    }
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }

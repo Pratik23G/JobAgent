@@ -1,15 +1,13 @@
 "use client";
 
-import { useSession } from "next-auth/react";
 import { useEffect, useState, useCallback } from "react";
-import { getSupabase } from "@/lib/db";
 
 const statusColors: Record<string, string> = {
-  applied: "bg-info/20 text-info",
-  interview: "bg-accent/20 text-accent",
-  offer: "bg-warning/20 text-warning",
-  rejected: "bg-danger/20 text-danger",
-  ghosted: "bg-muted/20 text-muted",
+  applied: "bg-blue-500/10 text-blue-400 border-blue-500/30",
+  interview: "bg-green-500/10 text-green-400 border-green-500/30",
+  offer: "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
+  rejected: "bg-red-500/10 text-red-400 border-red-500/30",
+  ghosted: "bg-gray-500/10 text-gray-400 border-gray-500/30",
 };
 
 interface Application {
@@ -21,21 +19,6 @@ interface Application {
   job_url: string | null;
   cover_letter: string | null;
   notes: string | null;
-}
-
-interface ApplyPack {
-  id: string;
-  application_id: string | null;
-  job_title: string;
-  company: string;
-  job_url: string | null;
-  cover_letter: string | null;
-  resume_bullets: string | null;
-  why_good_fit: string | null;
-  common_answers: Record<string, string> | null;
-  outreach_email: string | null;
-  source: string | null;
-  created_at: string;
 }
 
 function CopyBtn({ text }: { text: string }) {
@@ -55,90 +38,56 @@ function CopyBtn({ text }: { text: string }) {
   );
 }
 
-function PackSection({ label, text }: { label: string; text: string | null }) {
-  const [open, setOpen] = useState(false);
-  if (!text) return null;
-  return (
-    <div className="border-t border-card-border/50 pt-2">
-      <div className="flex items-center justify-between">
-        <button onClick={() => setOpen(!open)} className="text-xs font-medium text-muted hover:text-accent">
-          {open ? "▾" : "▸"} {label}
-        </button>
-        <CopyBtn text={text} />
-      </div>
-      {open && (
-        <pre className="mt-1 whitespace-pre-wrap font-mono text-xs text-foreground/80 bg-background/50 rounded p-2">
-          {text}
-        </pre>
-      )}
-    </div>
-  );
-}
-
 export default function ApplicationsPage() {
-  const { data: session } = useSession();
   const [applications, setApplications] = useState<Application[]>([]);
-  const [applyPacks, setApplyPacks] = useState<Record<string, ApplyPack>>({});
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [linkStatuses, setLinkStatuses] = useState<Record<string, "live" | "dead" | "checking">>({});
 
   const fetchApplications = useCallback(async () => {
-    if (!session?.user) {
-      setLoading(false);
-      return;
-    }
-    const userId = (session.user as { id?: string }).id;
-    if (!userId) {
-      setLoading(false);
-      return;
-    }
+    setLoading(true);
+    try {
+      const sessionId = localStorage.getItem("jobagent_session_id") || "";
+      const res = await fetch(`/api/dashboard?sessionId=${sessionId}`);
+      const data = await res.json();
 
-    const supabase = getSupabase();
-
-    // Fetch applications and apply packs in parallel
-    let appQuery = supabase
-      .from("applications")
-      .select("*")
-      .eq("user_id", userId)
-      .order("applied_at", { ascending: false });
-
-    if (filter !== "all") {
-      appQuery = appQuery.eq("status", filter);
-    }
-
-    const [appsRes, packsRes] = await Promise.all([
-      appQuery,
-      supabase
-        .from("apply_packs")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false }),
-    ]);
-
-    setApplications(appsRes.data || []);
-
-    // Index packs by application_id for quick lookup
-    const packMap: Record<string, ApplyPack> = {};
-    for (const pack of (packsRes.data || []) as ApplyPack[]) {
-      if (pack.application_id) {
-        packMap[pack.application_id] = pack;
+      let apps = data.applications || [];
+      if (filter !== "all") {
+        apps = apps.filter((a: Application) => a.status === filter);
       }
+      setApplications(apps);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
     }
-    setApplyPacks(packMap);
-    setLoading(false);
-  }, [session, filter]);
+  }, [filter]);
 
   useEffect(() => {
     fetchApplications();
   }, [fetchApplications]);
 
+  // Check job link status
+  const checkLink = async (id: string, url: string) => {
+    setLinkStatuses((prev) => ({ ...prev, [id]: "checking" }));
+    try {
+      const res = await fetch(url, { method: "HEAD", mode: "no-cors" });
+      // no-cors always returns opaque response, so we can't really check status
+      // but if fetch doesn't throw, the domain is reachable
+      setLinkStatuses((prev) => ({ ...prev, [id]: "live" }));
+    } catch {
+      setLinkStatuses((prev) => ({ ...prev, [id]: "dead" }));
+    }
+  };
+
   const updateStatus = async (id: string, newStatus: string) => {
-    const supabase = getSupabase();
-    await supabase
-      .from("applications")
-      .update({ status: newStatus, last_updated: new Date().toISOString() })
-      .eq("id", id);
+    const sessionId = localStorage.getItem("jobagent_session_id") || "";
+    await fetch("/api/dashboard/update-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status: newStatus, sessionId }),
+    });
     fetchApplications();
   };
 
@@ -179,8 +128,8 @@ export default function ApplicationsPage() {
       ) : (
         <div className="space-y-3">
           {applications.map((app) => {
-            const pack = applyPacks[app.id];
             const isExpanded = expandedId === app.id;
+            const linkStatus = linkStatuses[app.id];
 
             return (
               <div
@@ -193,19 +142,12 @@ export default function ApplicationsPage() {
                   onClick={() => setExpandedId(isExpanded ? null : app.id)}
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium text-sm truncate">{app.company}</p>
-                      {pack && (
-                        <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">
-                          Apply Pack
-                        </span>
-                      )}
-                    </div>
+                    <p className="font-medium text-sm truncate">{app.company}</p>
                     <p className="text-xs text-muted truncate">{app.job_title}</p>
                   </div>
 
                   <span
-                    className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColors[app.status] ?? ""}`}
+                    className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusColors[app.status] ?? statusColors.applied}`}
                   >
                     {app.status}
                   </span>
@@ -227,16 +169,43 @@ export default function ApplicationsPage() {
                     )}
                   </select>
 
-                  {app.job_url && (
-                    <a
-                      href={app.job_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-background hover:bg-accent/90 transition"
-                    >
-                      Apply
-                    </a>
+                  {app.job_url ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <a
+                        href={app.job_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-background hover:bg-accent/90 transition"
+                      >
+                        Apply
+                      </a>
+                      {/* Link status indicator */}
+                      {linkStatus === "dead" && (
+                        <span className="rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-xs text-red-400" title="This link may be expired">
+                          expired
+                        </span>
+                      )}
+                      {linkStatus === "checking" && (
+                        <span className="text-xs text-muted animate-pulse">...</span>
+                      )}
+                      {!linkStatus && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            checkLink(app.id, app.job_url!);
+                          }}
+                          className="text-xs text-muted hover:text-accent"
+                          title="Check if link is still active"
+                        >
+                          check
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="shrink-0 rounded-full bg-gray-500/10 border border-gray-500/30 px-2 py-0.5 text-xs text-gray-400">
+                      no link
+                    </span>
                   )}
 
                   <span className="shrink-0 text-muted text-xs">
@@ -247,52 +216,22 @@ export default function ApplicationsPage() {
                 {/* Expanded detail */}
                 {isExpanded && (
                   <div className="border-t border-card-border bg-card/30 px-4 py-4 space-y-3">
-                    {/* Notes */}
                     {app.notes && (
                       <p className="text-xs text-muted">{app.notes}</p>
                     )}
-
-                    {/* Apply Pack materials */}
-                    {pack ? (
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium text-accent uppercase tracking-wider">
-                          Application Materials
-                        </p>
-                        {pack.why_good_fit && (
-                          <p className="text-xs text-foreground/80 italic">
-                            {pack.why_good_fit}
-                          </p>
-                        )}
-                        <PackSection label="Cover Letter" text={pack.cover_letter} />
-                        <PackSection label="Tailored Resume Bullets" text={pack.resume_bullets} />
-                        <PackSection label="Outreach Email" text={pack.outreach_email} />
-                        {pack.common_answers && Object.keys(pack.common_answers).length > 0 && (
-                          <div className="border-t border-card-border/50 pt-2">
-                            <p className="text-xs font-medium text-muted mb-1">Common Q&A</p>
-                            {Object.entries(pack.common_answers).map(([q, a]) => (
-                              <div key={q} className="mb-1.5 flex items-start justify-between gap-2">
-                                <div className="min-w-0">
-                                  <p className="text-xs text-accent">
-                                    {q.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                                  </p>
-                                  <p className="text-xs text-foreground/80">{a}</p>
-                                </div>
-                                <CopyBtn text={a} />
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ) : app.cover_letter ? (
+                    {app.cover_letter ? (
                       <div>
-                        <p className="text-xs text-muted mb-1">Cover Letter:</p>
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs text-muted">Cover Letter:</p>
+                          <CopyBtn text={app.cover_letter} />
+                        </div>
                         <pre className="whitespace-pre-wrap font-mono text-xs text-foreground/80 bg-background/50 rounded p-3">
                           {app.cover_letter}
                         </pre>
                       </div>
                     ) : (
                       <p className="text-xs text-muted italic">
-                        No application materials generated. Use the Agent to generate an apply pack for this job.
+                        No cover letter saved. Use the Agent to generate an apply pack for this job.
                       </p>
                     )}
                   </div>
