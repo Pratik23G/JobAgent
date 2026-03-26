@@ -3,7 +3,12 @@ import { authOptions } from "@/lib/auth";
 import { anthropic, AGENT_TOOLS, buildSystemPrompt } from "@/lib/claude";
 import { getServiceClient } from "@/lib/db";
 import { sendColdEmail } from "@/lib/resend";
+import { runSubAgent, orchestrateApplication, createApplicationPlan } from "@/lib/orchestrator";
+import { extensionEvents } from "@/lib/events";
 import type Anthropic from "@anthropic-ai/sdk";
+
+// In-memory store for application plans pending confirmation (per session)
+const pendingPlans = new Map<string, ReturnType<typeof createApplicationPlan>>();
 
 // ─── Resume-aware job scoring ────────────────────────────────────────────────
 
@@ -57,6 +62,89 @@ Score 0-100. Be honest — 50 means average fit, 80+ means strong fit. Return ON
     // If scoring fails, return jobs unsorted
     return jobs.map((j) => ({ ...j, match_score: 0, match_reason: "" }));
   }
+}
+
+// ─── Python RAG microservice integration ────────────────────────────────────
+
+const RAG_SERVICE_URL = process.env.RAG_SERVICE_URL || "http://localhost:5000";
+let ragServiceAvailable: boolean | null = null; // cached health check
+
+async function checkRagService(): Promise<boolean> {
+  if (ragServiceAvailable !== null) return ragServiceAvailable;
+  try {
+    const res = await fetch(`${RAG_SERVICE_URL}/health`, { signal: AbortSignal.timeout(2000) });
+    ragServiceAvailable = res.ok;
+  } catch {
+    ragServiceAvailable = false;
+  }
+  // Re-check every 60s
+  setTimeout(() => { ragServiceAvailable = null; }, 60000);
+  return ragServiceAvailable;
+}
+
+async function scoreJobsWithRagService<T extends { title: string; company: string; description: string }>(
+  jobs: T[],
+  resumeText: string,
+  minScore: number
+): Promise<(T & { match_score: number; match_reason: string })[] | null> {
+  try {
+    const isAvailable = await checkRagService();
+    if (!isAvailable) return null; // Fall back to Claude scoring
+
+    // Use the /similarity endpoint for each job (batch via Promise.all)
+    const scored = await Promise.all(
+      jobs.map(async (job) => {
+        try {
+          const res = await fetch(`${RAG_SERVICE_URL}/similarity`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              resume_text: resumeText,
+              job_description: `${job.title} at ${job.company}. ${job.description}`,
+            }),
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!res.ok) return { ...job, match_score: 0, match_reason: "" };
+          const data = await res.json();
+          return {
+            ...job,
+            match_score: data.match_score ?? 0,
+            match_reason: `Semantic similarity: ${data.match_score}%`,
+          };
+        } catch {
+          return { ...job, match_score: 0, match_reason: "" };
+        }
+      })
+    );
+
+    return scored
+      .filter((j) => j.match_score >= minScore)
+      .sort((a, b) => b.match_score - a.match_score);
+  } catch {
+    return null; // Fall back to Claude scoring
+  }
+}
+
+// Unified scorer: tries Python RAG service first, falls back to Claude
+async function scoreJobs<T extends { title: string; company: string; description: string }>(
+  jobs: T[],
+  resumeData: { summary?: string; skills?: string[]; experience?: unknown[] },
+  minScore: number
+): Promise<(T & { match_score: number; match_reason: string })[]> {
+  // Build resume text for the RAG service
+  const resumeText = [
+    resumeData?.summary || "",
+    resumeData?.skills?.length ? `Skills: ${resumeData.skills.join(", ")}` : "",
+  ].filter(Boolean).join("\n");
+
+  // Try Python microservice first
+  if (resumeText) {
+    const ragResult = await scoreJobsWithRagService(jobs, resumeText, minScore);
+    if (ragResult) return ragResult;
+  }
+
+  // Fall back to Claude-based scoring
+  return scoreJobsAgainstResume(jobs, resumeData, minScore);
 }
 
 // ─── Multi-source job search ─────────────────────────────────────────────────
@@ -524,7 +612,7 @@ async function handleToolCall(
         }
 
         // RAG: Score jobs against resume
-        const scoredJobs = await scoreJobsAgainstResume(
+        const scoredJobs = await scoreJobs(
           allJobs,
           resumeData as { summary?: string; skills?: string[] },
           minScore
@@ -738,7 +826,7 @@ Keep it under 150 words. Be genuine, not salesy. Include a clear ask (e.g., 15-m
       }
 
       // RAG score against resume
-      const scored = await scoreJobsAgainstResume(
+      const scored = await scoreJobs(
         results,
         resumeData as { summary?: string; skills?: string[] },
         minScore
@@ -795,7 +883,7 @@ Keep it under 150 words. Be genuine, not salesy. Include a clear ask (e.g., 15-m
         }
 
         // Step 2: Score against resume
-        const scored = await scoreJobsAgainstResume(
+        const scored = await scoreJobs(
           allJobs,
           resumeData as { summary?: string; skills?: string[] },
           minScore
@@ -1113,6 +1201,126 @@ Return ONLY the JSON, no markdown fences.`,
       }
     }
 
+    // ─── Orchestration tools ─────────────────────────────────────────────────
+
+    case "orchestrate_application": {
+      const { job_title, company, job_url, job_description } = toolInput as {
+        job_title: string;
+        company: string;
+        job_url: string;
+        job_description: string;
+      };
+
+      try {
+        const plan = createApplicationPlan(job_title, company, job_url, job_description);
+        const result = await orchestrateApplication(
+          plan,
+          resumeData || {},
+          undefined
+        );
+
+        // Store plan for confirmation step
+        const planId = `plan_${Date.now()}`;
+        pendingPlans.set(planId, result.plan);
+
+        // Also save the apply pack to DB
+        if (result.plan.steps.every((s) => s.status !== "error")) {
+          const docResult = result.plan.steps.find((s) => s.agent === "document_manager")?.result;
+          const formResult = result.plan.steps.find((s) => s.agent === "form_filler")?.result;
+          const matchResult = result.plan.steps.find((s) => s.agent === "job_matcher")?.result;
+
+          await supabase.from("apply_packs").insert({
+            user_id: userId,
+            job_title,
+            company,
+            job_url,
+            cover_letter: docResult?.data?.cover_letter || "",
+            resume_bullets: JSON.stringify(docResult?.data?.resume_bullets || []),
+            why_good_fit: matchResult?.data?.reason || matchResult?.data?.justification || "",
+            common_answers: formResult?.data || {},
+            source: "orchestrator",
+          });
+        }
+
+        return JSON.stringify({
+          plan_id: planId,
+          needs_confirmation: result.needsConfirmation,
+          confirmation_message: result.confirmationMessage,
+          steps: result.plan.steps.map((s) => ({
+            agent: s.agent,
+            action: s.action,
+            status: s.status,
+            summary: s.result?.message || "",
+            data: s.result?.data || {},
+          })),
+          // Include form fill data for the extension
+          form_fill_data: result.plan.steps.find((s) => s.agent === "form_filler")?.result?.data,
+          match_score: result.plan.steps.find((s) => s.agent === "job_matcher")?.result?.data,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: "Orchestration failed", detail: String(err) });
+      }
+    }
+
+    case "confirm_application": {
+      const { plan_id } = toolInput as { plan_id: string; modifications?: string };
+
+      const plan = pendingPlans.get(plan_id);
+      if (!plan) {
+        return JSON.stringify({ error: "No pending plan found. The plan may have expired — run orchestrate_application again." });
+      }
+
+      try {
+        // Record the application
+        const { data: app } = await supabase
+          .from("applications")
+          .insert({
+            user_id: userId,
+            job_title: plan.jobTitle,
+            company: plan.company,
+            job_url: plan.jobUrl,
+            status: "applied",
+          })
+          .select()
+          .single();
+
+        pendingPlans.delete(plan_id);
+
+        // Get form fill data to send to extension
+        const formStep = plan.steps.find((s) => s.agent === "form_filler");
+
+        return JSON.stringify({
+          success: true,
+          application_id: app?.id,
+          message: `Application confirmed for ${plan.jobTitle} at ${plan.company}! Click "Auto-Fill" in the JobAgent extension on the application page to fill the form automatically.`,
+          apply_url: plan.jobUrl,
+          form_fill_data: formStep?.result?.data || {},
+          pack: {
+            company: plan.company,
+            title: plan.jobTitle,
+          },
+        });
+      } catch (err) {
+        return JSON.stringify({ error: "Failed to confirm application", detail: String(err) });
+      }
+    }
+
+    case "delegate_to_subagent": {
+      const { agent, task, context } = toolInput as {
+        agent: string;
+        task: string;
+        context?: Record<string, unknown>;
+      };
+
+      const enrichedContext = {
+        ...context,
+        resume: resumeData || context?.resume,
+      };
+
+      const result = await runSubAgent(agent, task, enrichedContext);
+      return JSON.stringify(result);
+    }
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }
@@ -1121,14 +1329,18 @@ Return ONLY the JSON, no markdown fences.`,
 // ─── Main POST handler ──────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
-  // Try auth, but allow anonymous fallback for development
-  let userId = "anonymous";
+  // Try auth; fall back to session-derived anonymous ID so DB persistence always works
+  let userId = "";
+  let isOAuthUser = false;
   try {
     const session = await getServerSession(authOptions);
     const uid = (session?.user as { id?: string })?.id;
-    if (uid) userId = uid;
+    if (uid) {
+      userId = uid;
+      isOAuthUser = true;
+    }
   } catch {
-    // Auth may be misconfigured — continue as anonymous
+    // Auth may be misconfigured — continue with anonymous ID
   }
 
   const { command, resumeData, sessionId, chatHistory } = await request.json();
@@ -1137,11 +1349,17 @@ export async function POST(request: Request) {
   }
 
   const sid = sessionId || crypto.randomUUID();
+
+  // If no OAuth user, derive a stable anonymous ID from the session so we can
+  // still persist conversations, applications, and logs to the database.
+  if (!userId) {
+    userId = `anon_${sid}`;
+  }
+
   const supabase = getServiceClient();
-  const isAuthenticated = userId !== "anonymous";
 
   try {
-    // Load context from DB only if authenticated
+    // Always load context from DB — works for both OAuth and anonymous users
     let ctx = {
       sessionMessages: [] as { role: string; content: string }[],
       sessionSummary: "",
@@ -1149,15 +1367,18 @@ export async function POST(request: Request) {
       resumeFromDb: null as Record<string, unknown> | null,
     };
 
-    if (isAuthenticated) {
-      ctx = await loadSessionContext(userId, sid);
-    }
+    ctx = await loadSessionContext(userId, sid);
 
     // Merge resume: prefer DB version → client-sent localStorage data → null
     const resume = ctx.resumeFromDb || resumeData || null;
 
-    // Build conversation history from client localStorage (fallback when auth is broken)
-    const clientHistory: { role: string; text: string }[] = chatHistory || [];
+    // Build conversation history: prefer DB session messages, fall back to client localStorage
+    const dbHistory = (ctx.sessionMessages || []).map((m: { role: string; content?: string; text?: string }) => ({
+      role: m.role,
+      text: m.text || m.content || "",
+    }));
+    const clientHistory: { role: string; text: string }[] =
+      dbHistory.length > 0 ? dbHistory : (chatHistory || []);
 
     // Build context-aware system prompt with conversation memory
     const systemPrompt = buildSystemPrompt({
@@ -1250,22 +1471,30 @@ export async function POST(request: Request) {
       .map((b) => (b as Anthropic.TextBlock).text)
       .join("\n");
 
-    // Save session state + activity log (only if authenticated)
-    if (isAuthenticated) {
-      await Promise.all([
-        saveSessionState(userId, sid, command, agentResponse),
-        supabase.from("agent_logs").insert({
-          user_id: userId,
-          command,
-          action: agentResponse.slice(0, 500),
-          result: { iterations, stop_reason: response.stop_reason },
-        }),
-      ]);
+    // Always save session state + activity log to DB
+    await Promise.all([
+      saveSessionState(userId, sid, command, agentResponse),
+      supabase.from("agent_logs").insert({
+        user_id: userId,
+        command,
+        action: agentResponse.slice(0, 500),
+        result: { iterations, stop_reason: response.stop_reason },
+      }),
+    ]);
+
+    // Push apply packs to extension via SSE (drops silently if no subscriber)
+    if (collectedApplyPacks.length > 0) {
+      extensionEvents.publish(sid, {
+        type: "apply_pack",
+        data: { packs: collectedApplyPacks },
+      });
     }
 
     return Response.json({
       response: agentResponse,
       sessionId: sid,
+      userId,
+      authenticated: isOAuthUser,
       applyPacks: collectedApplyPacks.length > 0 ? collectedApplyPacks : undefined,
     });
   } catch (err) {
