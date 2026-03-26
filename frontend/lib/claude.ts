@@ -242,6 +242,15 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
       required: ["agent", "task"],
     },
   },
+  {
+    name: "scan_gmail",
+    description:
+      "Scan the user's Gmail inbox for job-related emails (application confirmations, interview invitations, rejections, offers). Classifies each email and auto-updates application statuses. Use when the user says 'check my email', 'any replies?', 'scan my inbox', etc. Requires Gmail to be connected first.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
 ];
 
 export function buildSystemPrompt(context: {
