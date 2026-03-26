@@ -1,32 +1,37 @@
-// GET /api/gmail — returns Gmail auth URL to start OAuth flow
-// POST /api/gmail — stores tokens after OAuth callback
+// GET /api/gmail?sessionId=xxx — Check Gmail connection status for this user
+// DELETE /api/gmail?sessionId=xxx — Disconnect Gmail for this user
 
-import { getAuthUrl } from "@/lib/gmail";
-import { writeFile, readFile } from "fs/promises";
-import { join } from "path";
+import { getAuthUrl, getGmailTokens, deleteGmailTokens } from "@/lib/gmail";
 
-const TOKEN_FILE = join(process.cwd(), ".gmail-tokens.json");
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const sessionId = searchParams.get("sessionId");
 
-export async function GET() {
-  // Check if already connected
-  try {
-    const raw = await readFile(TOKEN_FILE, "utf-8");
-    const tokens = JSON.parse(raw);
-    if (tokens.access_token) {
-      return Response.json({ connected: true, email: tokens.email || "connected" });
-    }
-  } catch {
-    // Not connected
+  if (!sessionId) {
+    return Response.json({ connected: false, error: "Missing sessionId" });
   }
 
-  const authUrl = getAuthUrl();
+  const tokens = await getGmailTokens(sessionId);
+
+  if (tokens) {
+    return Response.json({
+      connected: true,
+      email: tokens.gmail_email,
+    });
+  }
+
+  const authUrl = getAuthUrl(sessionId);
   return Response.json({ connected: false, authUrl });
 }
 
-export async function POST(request: Request) {
-  const { tokens, email } = await request.json();
+export async function DELETE(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const sessionId = searchParams.get("sessionId");
 
-  await writeFile(TOKEN_FILE, JSON.stringify({ ...tokens, email }), "utf-8");
+  if (!sessionId) {
+    return Response.json({ error: "Missing sessionId" }, { status: 400 });
+  }
 
+  await deleteGmailTokens(sessionId);
   return Response.json({ success: true });
 }

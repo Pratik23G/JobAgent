@@ -87,6 +87,16 @@ CREATE TABLE apply_packs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Gmail OAuth tokens (per-user, keyed by session_id)
+CREATE TABLE gmail_tokens (
+  session_id TEXT PRIMARY KEY,
+  gmail_email TEXT NOT NULL,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT,
+  expiry TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Enable Row Level Security
 ALTER TABLE resumes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE applications ENABLE ROW LEVEL SECURITY;

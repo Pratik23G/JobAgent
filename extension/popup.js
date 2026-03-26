@@ -237,6 +237,85 @@ async function init() {
     setTimeout(() => { fillBtn.textContent = "Auto-Fill Application"; fillBtn.disabled = false; }, 3000);
   });
 
+  // ─── Fill & Submit button (does everything: fill + upload + submit) ────────
+  const submitBtn = document.getElementById("submit-btn");
+  submitBtn.disabled = packs.length === 0;
+
+  submitBtn.addEventListener("click", async () => {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Injecting...";
+
+    const { selectedPackIndex } = await chrome.storage.local.get("selectedPackIndex");
+    const pack = packs[selectedPackIndex || 0];
+    if (!pack) {
+      submitBtn.textContent = "No pack selected";
+      setTimeout(() => { submitBtn.textContent = "Fill, Upload & Submit"; submitBtn.disabled = false; }, 2000);
+      return;
+    }
+
+    const { userProfile } = await chrome.storage.local.get("userProfile");
+
+    const injected = await ensureContentScript(tab.id);
+    if (!injected) {
+      submitBtn.textContent = "Cannot inject — refresh page";
+      setTimeout(() => { submitBtn.textContent = "Fill, Upload & Submit"; submitBtn.disabled = false; }, 3000);
+      return;
+    }
+
+    submitBtn.textContent = "Filling + Submitting...";
+
+    try {
+      const results = await chrome.tabs.sendMessage(tab.id, {
+        action: "fill_and_submit",
+        pack,
+        profile: userProfile || {},
+        ats: detectedATS || "Generic",
+      });
+
+      fillResults.style.display = "block";
+      fieldResults.innerHTML = "";
+
+      if (results?.fields) {
+        results.fields.forEach(field => {
+          const li = document.createElement("li");
+          li.className = field.filled ? "filled" : "missed";
+          li.textContent = `${field.filled ? "✓" : "○"} ${field.name}`;
+          fieldResults.appendChild(li);
+        });
+      }
+
+      // Show submit status
+      const submitLi = document.createElement("li");
+      if (results?.submitted) {
+        submitLi.className = "filled";
+        submitLi.textContent = `✓ Form submitted! (${results.submitReason})`;
+        submitBtn.textContent = "Submitted!";
+        submitBtn.style.background = "#22c55e";
+      } else {
+        submitLi.className = "missed";
+        submitLi.textContent = `○ Submit: ${results?.submitReason || "No submit button found"}`;
+        submitBtn.textContent = "Filled (submit manually)";
+        submitBtn.style.background = "#f59e0b";
+      }
+      fieldResults.appendChild(submitLi);
+
+      if (results?.report?.message) {
+        const reportLi = document.createElement("li");
+        reportLi.className = "filled";
+        reportLi.textContent = `✓ ${results.report.message}`;
+        fieldResults.appendChild(reportLi);
+      }
+    } catch (err) {
+      submitBtn.textContent = "Failed — " + (err.message || "error");
+    }
+
+    setTimeout(() => {
+      submitBtn.textContent = "Fill, Upload & Submit";
+      submitBtn.style.background = "#22c55e";
+      submitBtn.disabled = false;
+    }, 5000);
+  });
+
   // ─── Upload resume button ─────────────────────────────────────────────────
   uploadBtn.disabled = !hasResume;
   if (!hasResume) {
