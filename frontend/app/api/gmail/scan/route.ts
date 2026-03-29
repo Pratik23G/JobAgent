@@ -4,9 +4,7 @@
 
 import { fetchRecentEmails, getGmailTokens, refreshAndSaveToken } from "@/lib/gmail";
 import { getServiceClient } from "@/lib/db";
-import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic();
+import { complete } from "@/lib/models";
 
 interface ClassifiedEmail {
   emailId: string;
@@ -32,12 +30,10 @@ async function classifyEmails(
     `[${i}] From: ${e.from}\nSubject: ${e.subject}\nDate: ${e.date}\nSnippet: ${e.snippet}\nBody (first 500 chars): ${e.body.slice(0, 500)}`
   ).join("\n\n---\n\n");
 
-  const resp = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
-    messages: [{
-      role: "user",
-      content: `Classify these emails related to job applications. Known companies I've applied to: ${knownCompanies.join(", ") || "unknown"}.
+  const resp = await complete(
+    {
+      system: "You are an email classification assistant for job applications. Return ONLY valid JSON arrays.",
+      userMessage: `Classify these emails related to job applications. Known companies I've applied to: ${knownCompanies.join(", ") || "unknown"}.
 
 For each email, determine:
 1. classification: "application_confirmation", "interview_invitation", "rejection", "offer", "follow_up_request", "recruiter_outreach", or "irrelevant"
@@ -54,10 +50,12 @@ Emails:
 ${emailSummaries}
 
 Return ONLY valid JSON. Mark spam/newsletters/irrelevant as "irrelevant".`,
-    }],
-  });
+      maxTokens: 4096,
+    },
+    "email_classify"
+  );
 
-  const text = resp.content[0].type === "text" ? resp.content[0].text : "[]";
+  const text = resp.text;
 
   try {
     const jsonMatch = text.match(/\[[\s\S]*\]/);

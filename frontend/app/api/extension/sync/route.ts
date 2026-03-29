@@ -1,34 +1,9 @@
-// GET /api/extension/sync — Extension pulls latest data
-// Reads from file cache first (written by POST /api/extension/push),
-// falls back to Supabase if cache is missing or stale.
+// GET /api/extension/sync — Extension pulls latest data from Supabase.
+// No file cache — reads directly from database (safe for serverless/Vercel).
 
-import { readFile } from "fs/promises";
-import { join } from "path";
 import { getServiceClient } from "@/lib/db";
 
-const CACHE_FILE = join(process.cwd(), ".extension-cache.json");
-
 export async function GET() {
-  // Try file cache first (written by frontend via /api/extension/push)
-  try {
-    const raw = await readFile(CACHE_FILE, "utf-8");
-    const cache = JSON.parse(raw);
-
-    // Cache is valid if less than 1 hour old
-    if (cache.updatedAt && Date.now() - cache.updatedAt < 3600000) {
-      return Response.json({
-        packs: cache.packs || [],
-        profile: cache.profile || {},
-        resumeFileUrl: cache.resumeBlob || null,
-        hasResume: !!cache.resumeBlob,
-        source: "cache",
-      });
-    }
-  } catch {
-    // No cache file or invalid — fall through to Supabase
-  }
-
-  // Fall back to Supabase
   const supabase = getServiceClient();
 
   try {
@@ -73,7 +48,7 @@ export async function GET() {
     const resumeDataUri = resume?.file_url?.startsWith("data:") ? resume.file_url : null;
 
     return Response.json({
-      packs: (packs || []).map(p => ({
+      packs: (packs || []).map((p) => ({
         company: p.company,
         title: p.job_title,
         job_url: p.job_url,
@@ -89,7 +64,7 @@ export async function GET() {
       source: "supabase",
     });
   } catch (err) {
-    console.error("Extension sync error:", err);
+    console.error("[extension/sync] Error:", err instanceof Error ? err.message : String(err));
     return Response.json({ packs: [], profile: {}, hasResume: false, source: "error" });
   }
 }

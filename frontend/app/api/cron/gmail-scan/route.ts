@@ -3,6 +3,7 @@
 // Scans each session that has Gmail tokens and hasn't been scanned recently.
 
 import { getServiceClient } from "@/lib/db";
+import { getBaseUrl } from "@/lib/config";
 
 export async function GET() {
   const supabase = getServiceClient();
@@ -34,7 +35,7 @@ export async function GET() {
 
     // Trigger scan via internal API call
     try {
-      const res = await fetch(`http://localhost:${process.env.PORT || 3000}/api/gmail/scan`, {
+      const res = await fetch(`${getBaseUrl()}/api/gmail/scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: session.session_id }),

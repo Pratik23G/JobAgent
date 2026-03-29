@@ -4,7 +4,7 @@
 type Listener = (event: ExtensionEvent) => void;
 
 export interface ExtensionEvent {
-  type: "apply_pack" | "form_fill" | "sync" | "ping";
+  type: "apply_pack" | "form_fill" | "sync" | "ping" | "auto_fill_request" | "submit_approved";
   data: Record<string, unknown>;
 }
 

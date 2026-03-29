@@ -5,583 +5,19 @@ import { getServiceClient } from "@/lib/db";
 import { sendColdEmail } from "@/lib/resend";
 import { runSubAgent, orchestrateApplication, createApplicationPlan } from "@/lib/orchestrator";
 import { extensionEvents } from "@/lib/events";
+import { complete, CLAUDE_MODEL } from "@/lib/models";
+import { AgentCommandSchema, validateRequest } from "@/lib/validation";
+import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { scoreJobs } from "@/lib/job-scoring";
+import { searchMultipleSources, type JobResult } from "@/lib/job-search";
+import { loadSessionContext, saveSessionState } from "@/lib/session";
+import { getBaseUrl } from "@/lib/config";
 import type Anthropic from "@anthropic-ai/sdk";
 
-// In-memory store for application plans pending confirmation (per session)
-const pendingPlans = new Map<string, ReturnType<typeof createApplicationPlan>>();
-
-// ─── Resume-aware job scoring ────────────────────────────────────────────────
-
-async function scoreJobsAgainstResume<T extends { title: string; company: string; description: string }>(
-  jobs: T[],
-  resumeData: { summary?: string; skills?: string[]; experience?: unknown[] },
-  minScore: number
-): Promise<(T & { match_score: number; match_reason: string })[]> {
-  if (!resumeData?.skills?.length || jobs.length === 0)
-    return jobs.map((j) => ({ ...j, match_score: 0, match_reason: "" }));
-
-  const resp = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 2048,
-    messages: [
-      {
-        role: "user",
-        content: `Score how well each job matches this candidate's resume. Return ONLY a JSON array.
-
-Resume skills: ${resumeData.skills.join(", ")}
-Resume summary: ${resumeData.summary || "N/A"}
-
-Jobs to score:
-${jobs.map((j, i) => `${i}. ${j.title} at ${j.company}: ${j.description}`).join("\n")}
-
-Return JSON array with one object per job:
-[{"index": 0, "match_score": 85, "reason": "Strong fit because..."}]
-
-Score 0-100. Be honest — 50 means average fit, 80+ means strong fit. Return ONLY valid JSON.`,
-      },
-    ],
-  });
-
-  const text = resp.content[0].type === "text" ? resp.content[0].text : "[]";
-  try {
-    const scores: { index: number; match_score: number; reason: string }[] =
-      JSON.parse(text);
-    const scoredJobs = jobs.map((job, i) => {
-      const score = scores.find((s) => s.index === i);
-      return {
-        ...job,
-        match_score: score?.match_score ?? 50,
-        match_reason: score?.reason ?? "",
-      };
-    });
-
-    return scoredJobs
-      .filter((j) => j.match_score >= minScore)
-      .sort((a, b) => b.match_score - a.match_score);
-  } catch {
-    // If scoring fails, return jobs unsorted
-    return jobs.map((j) => ({ ...j, match_score: 0, match_reason: "" }));
-  }
-}
-
-// ─── Python RAG microservice integration ────────────────────────────────────
-
-const RAG_SERVICE_URL = process.env.RAG_SERVICE_URL || "http://localhost:5000";
-let ragServiceAvailable: boolean | null = null; // cached health check
-
-async function checkRagService(): Promise<boolean> {
-  if (ragServiceAvailable !== null) return ragServiceAvailable;
-  try {
-    const res = await fetch(`${RAG_SERVICE_URL}/health`, { signal: AbortSignal.timeout(2000) });
-    ragServiceAvailable = res.ok;
-  } catch {
-    ragServiceAvailable = false;
-  }
-  // Re-check every 60s
-  setTimeout(() => { ragServiceAvailable = null; }, 60000);
-  return ragServiceAvailable;
-}
-
-async function scoreJobsWithRagService<T extends { title: string; company: string; description: string }>(
-  jobs: T[],
-  resumeText: string,
-  minScore: number
-): Promise<(T & { match_score: number; match_reason: string })[] | null> {
-  try {
-    const isAvailable = await checkRagService();
-    if (!isAvailable) return null; // Fall back to Claude scoring
-
-    // Use the /similarity endpoint for each job (batch via Promise.all)
-    const scored = await Promise.all(
-      jobs.map(async (job) => {
-        try {
-          const res = await fetch(`${RAG_SERVICE_URL}/similarity`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              resume_text: resumeText,
-              job_description: `${job.title} at ${job.company}. ${job.description}`,
-            }),
-            signal: AbortSignal.timeout(5000),
-          });
-          if (!res.ok) return { ...job, match_score: 0, match_reason: "" };
-          const data = await res.json();
-          return {
-            ...job,
-            match_score: data.match_score ?? 0,
-            match_reason: `Semantic similarity: ${data.match_score}%`,
-          };
-        } catch {
-          return { ...job, match_score: 0, match_reason: "" };
-        }
-      })
-    );
-
-    return scored
-      .filter((j) => j.match_score >= minScore)
-      .sort((a, b) => b.match_score - a.match_score);
-  } catch {
-    return null; // Fall back to Claude scoring
-  }
-}
-
-// Unified scorer: tries Python RAG service first, falls back to Claude
-async function scoreJobs<T extends { title: string; company: string; description: string }>(
-  jobs: T[],
-  resumeData: { summary?: string; skills?: string[]; experience?: unknown[] },
-  minScore: number
-): Promise<(T & { match_score: number; match_reason: string })[]> {
-  // Build resume text for the RAG service
-  const resumeText = [
-    resumeData?.summary || "",
-    resumeData?.skills?.length ? `Skills: ${resumeData.skills.join(", ")}` : "",
-  ].filter(Boolean).join("\n");
-
-  // Try Python microservice first
-  if (resumeText) {
-    const ragResult = await scoreJobsWithRagService(jobs, resumeText, minScore);
-    if (ragResult) return ragResult;
-  }
-
-  // Fall back to Claude-based scoring
-  return scoreJobsAgainstResume(jobs, resumeData, minScore);
-}
-
-// ─── Multi-source job search ─────────────────────────────────────────────────
-
-interface JobResult {
-  [k: string]: unknown;
-  title: string;
-  company: string;
-  location: string;
-  url: string;
-  description: string;
-  salary_min?: number;
-  salary_max?: number;
-  source: string;
-  posted_date?: string;
-}
-
-const LOCATION_MAP: Record<string, string> = {
-  "bay area": "San Francisco",
-  sf: "San Francisco",
-  nyc: "New York",
-  la: "Los Angeles",
-  dc: "Washington",
-  remote: "",
-};
-
-// Adzuna search with progressive date relaxation
-// Tries 7 days → 30 days → no limit until it finds results
-async function searchAdzuna(
-  query: string,
-  location: string
-): Promise<JobResult[]> {
-  const appId = process.env.ADZUNA_APP_ID;
-  const appKey = process.env.ADZUNA_API_KEY;
-  if (!appId || !appKey) return [];
-
-  const mappedLocation = LOCATION_MAP[location.toLowerCase()] ?? location;
-
-  // Progressive date relaxation: try tight window first, then widen
-  const dateWindows = [7, 30, 0]; // 0 = no filter
-
-  for (const maxDays of dateWindows) {
-    try {
-      const dateParam = maxDays > 0 ? `&max_days_old=${maxDays}` : "";
-      const url = `https://api.adzuna.com/v1/api/jobs/us/search/1?app_id=${appId}&app_key=${appKey}&results_per_page=15&sort_by=date${dateParam}&what=${encodeURIComponent(query)}&where=${encodeURIComponent(mappedLocation)}&content-type=application/json`;
-      const res = await fetch(url);
-      const data = await res.json();
-      const jobs: JobResult[] = (data.results || []).map(
-        (j: {
-          title: string;
-          company?: { display_name?: string };
-          location?: { display_name?: string };
-          redirect_url?: string;
-          description?: string;
-          salary_min?: number;
-          salary_max?: number;
-          created?: string;
-        }) => {
-          const company = j.company?.display_name || "Unknown";
-          // Adzuna redirect_url often returns 403.
-          // Try to extract a real URL from the description, otherwise
-          // build a Google search link to the actual job posting.
-          const descUrls = (j.description || "").match(/https?:\/\/[^\s<>"]+/);
-          const applyUrl =
-            descUrls?.[0] ||
-            `https://www.google.com/search?q=${encodeURIComponent(`${company} ${j.title} apply`)}`;
-
-          return {
-            title: j.title,
-            company,
-            location: j.location?.display_name || "",
-            url: applyUrl,
-            description: (j.description || "").slice(0, 300),
-            salary_min: j.salary_min,
-            salary_max: j.salary_max,
-            source: "adzuna",
-            posted_date: j.created || "",
-          };
-        }
-      );
-
-      if (jobs.length > 0) return jobs;
-      // No results at this date range — widen
-    } catch {
-      continue;
-    }
-  }
-
-  return [];
-}
-
-// Search Remotive (free, remote-only jobs)
-async function searchRemotive(query: string): Promise<JobResult[]> {
-  try {
-    const url = `https://remotive.com/api/remote-jobs?search=${encodeURIComponent(query)}&limit=10`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return (data.jobs || []).map(
-      (j: {
-        title: string;
-        company_name?: string;
-        candidate_required_location?: string;
-        url?: string;
-        description?: string;
-        salary?: string;
-        publication_date?: string;
-      }) => ({
-        title: j.title,
-        company: j.company_name || "Unknown",
-        location: j.candidate_required_location || "Remote",
-        url: j.url || "",
-        description: (j.description || "").replace(/<[^>]*>/g, "").slice(0, 300),
-        source: "remotive",
-        posted_date: j.publication_date || "",
-      })
-    );
-  } catch {
-    return [];
-  }
-}
-
-// JSearch via RapidAPI (free tier: 500 req/month)
-// Aggregates LinkedIn, Indeed, Glassdoor, ZipRecruiter
-async function searchJSearch(
-  query: string,
-  location: string
-): Promise<JobResult[]> {
-  const apiKey = process.env.JSEARCH_API_KEY;
-  if (!apiKey) return [];
-
-  const mappedLocation = LOCATION_MAP[location.toLowerCase()] ?? location;
-  const locationQuery = mappedLocation ? ` in ${mappedLocation}` : "";
-
-  try {
-    const url = `https://jsearch.p.rapidapi.com/search?query=${encodeURIComponent(query + locationQuery)}&page=1&num_pages=1&date_posted=week`;
-    const res = await fetch(url, {
-      headers: {
-        "X-RapidAPI-Key": apiKey,
-        "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-      },
-    });
-    if (!res.ok) {
-      // 403 = not subscribed, 429 = rate limited — fail silently
-      console.warn(`[JSearch] HTTP ${res.status} — ${res.status === 403 ? "not subscribed to JSearch on RapidAPI" : "request failed"}`);
-      return [];
-    }
-    const data = await res.json();
-    return (data.data || []).map(
-      (j: {
-        job_title: string;
-        employer_name?: string;
-        job_city?: string;
-        job_state?: string;
-        job_apply_link?: string;
-        job_description?: string;
-        job_min_salary?: number;
-        job_max_salary?: number;
-        job_posted_at_datetime_utc?: string;
-        job_publisher?: string;
-      }) => ({
-        title: j.job_title,
-        company: j.employer_name || "Unknown",
-        location: [j.job_city, j.job_state].filter(Boolean).join(", ") || "Remote",
-        url: j.job_apply_link || "",
-        description: (j.job_description || "").slice(0, 300),
-        salary_min: j.job_min_salary,
-        salary_max: j.job_max_salary,
-        source: `jsearch-${j.job_publisher || "unknown"}`,
-        posted_date: j.job_posted_at_datetime_utc || "",
-      })
-    );
-  } catch {
-    return [];
-  }
-}
-
-// Arbeitnow (free, no key, global tech jobs)
-async function searchArbeitnow(query: string): Promise<JobResult[]> {
-  try {
-    const url = `https://www.arbeitnow.com/api/job-board-api`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const queryLower = query.toLowerCase();
-    // Filter client-side since API doesn't support search well
-    const filtered = (data.data || [])
-      .filter((j: { title: string; description?: string; tags?: string[] }) => {
-        const text = `${j.title} ${j.description || ""} ${(j.tags || []).join(" ")}`.toLowerCase();
-        return queryLower.split(" ").some((word: string) => word.length > 2 && text.includes(word));
-      })
-      .slice(0, 10);
-
-    return filtered.map(
-      (j: {
-        title: string;
-        company_name?: string;
-        location?: string;
-        url?: string;
-        description?: string;
-        tags?: string[];
-        created_at?: number;
-      }) => ({
-        title: j.title,
-        company: j.company_name || "Unknown",
-        location: j.location || "Remote",
-        url: j.url || "",
-        description: (j.description || "").replace(/<[^>]*>/g, "").slice(0, 300),
-        source: "arbeitnow",
-        posted_date: j.created_at ? new Date(j.created_at * 1000).toISOString() : "",
-      })
-    );
-  } catch {
-    return [];
-  }
-}
-
-// Hacker News "Who's Hiring" threads via Algolia (free, no key, high-quality startup jobs)
-// HN format is typically: "Company | Role | Location | Remote | URL"
-async function searchHNHiring(query: string): Promise<JobResult[]> {
-  try {
-    const thirtyDaysAgo = Math.floor(Date.now() / 1000) - 30 * 86400;
-    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(`"hiring" ${query}`)}&tags=comment&numericFilters=created_at_i>${thirtyDaysAgo}&hitsPerPage=15`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data = await res.json();
-
-    return (data.hits || [])
-      .filter((h: { comment_text?: string }) => {
-        const text = (h.comment_text || "").toLowerCase();
-        // HN job posts typically use | as separator and contain a URL
-        return text.includes("|") && text.includes("http");
-      })
-      .slice(0, 8)
-      .map((h: { comment_text?: string; objectID?: string; created_at_i?: number }) => {
-        const raw = (h.comment_text || "").replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&").replace(/&#x2F;/g, "/").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
-        // Split on | which is the HN convention
-        const parts = raw.split("|").map((p: string) => p.trim());
-
-        // Extract company (first part, before any |)
-        const company = (parts[0] || "").slice(0, 60) || "Startup";
-
-        // Extract role — usually 2nd part, look for engineering keywords
-        const rolePart = parts.find((p: string) =>
-          /engineer|developer|designer|manager|scientist|analyst|devops|sre|frontend|backend|fullstack|full.stack/i.test(p)
-        );
-        const role = rolePart?.slice(0, 80) || (parts[1] || query).slice(0, 80);
-
-        // Extract location — look for location-like parts
-        const locationPart = parts.find((p: string) =>
-          /remote|onsite|hybrid|sf|nyc|bay area|new york|seattle|austin|london|berlin|usa|us only|eu only|worldwide/i.test(p)
-        );
-        const location = locationPart?.slice(0, 60) || "";
-
-        // Extract URL from the comment
-        const urlMatch = raw.match(/https?:\/\/[^\s<>"]+/);
-        const applyUrl = urlMatch?.[0] || `https://news.ycombinator.com/item?id=${h.objectID}`;
-
-        return {
-          title: role,
-          company,
-          location,
-          url: applyUrl,
-          description: raw.slice(0, 300),
-          source: "hackernews",
-          posted_date: h.created_at_i ? new Date(h.created_at_i * 1000).toISOString() : "",
-        };
-      });
-  } catch {
-    return [];
-  }
-}
-
-// Build multiple query variations from a title to maximize results
-// e.g. "new grad software engineer" → ["software engineer", "junior software engineer", "entry level software engineer"]
-function buildQueryVariations(title: string, keywords: string[]): string[] {
-  const lower = title.toLowerCase();
-  const queries: string[] = [];
-
-  // Clean out conversational filler
-  const cleaned = lower
-    .replace(/\b(find|search|look for|get|me|any|opening|openings|new graduals?|for a?|college students?|please|can you)\b/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // Full query with keywords
-  const full = [cleaned, ...keywords].join(" ").trim();
-  if (full) queries.push(full);
-
-  // If it mentions new grad/junior/entry level, add variations
-  const isEntryLevel = /\b(new grad|entry.?level|junior|intern|fresh|graduate|college|university|recent grad)\b/i.test(
-    title + " " + keywords.join(" ")
-  );
-
-  // Extract the core role (e.g. "software engineer" from "new grad software engineer")
-  const coreRole = cleaned
-    .replace(/\b(new grad|entry.?level|junior|senior|lead|staff|principal|intern|fresh|graduate|recent grad)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (coreRole && coreRole !== cleaned) {
-    if (isEntryLevel) {
-      queries.push(`junior ${coreRole}`);
-      queries.push(`entry level ${coreRole}`);
-    }
-    queries.push(coreRole); // broadest fallback
-  }
-
-  // Deduplicate
-  return [...new Set(queries.filter(Boolean))];
-}
-
-async function searchMultipleSources(
-  title: string,
-  location: string,
-  keywords: string[]
-): Promise<JobResult[]> {
-  const isRemote = !location || location.toLowerCase() === "remote";
-  const queryVariations = buildQueryVariations(title, keywords);
-  const primaryQuery = queryVariations[0] || title;
-  const broadQuery = queryVariations[queryVariations.length - 1] || title;
-
-  // Fire ALL sources in parallel for speed
-  const searches: Promise<JobResult[]>[] = [];
-
-  // Adzuna: try query variations sequentially (it's the primary source)
-  searches.push(
-    (async () => {
-      for (const query of queryVariations) {
-        const jobs = await searchAdzuna(query, location);
-        if (jobs.length > 0) return jobs;
-      }
-      return [];
-    })()
-  );
-
-  // JSearch (LinkedIn/Indeed/Glassdoor aggregator) — use primary query
-  searches.push(searchJSearch(primaryQuery, location));
-
-  // HN Who's Hiring — great for startup/tech roles
-  searches.push(searchHNHiring(broadQuery));
-
-  // Arbeitnow — global tech jobs
-  searches.push(searchArbeitnow(broadQuery));
-
-  // Remotive — for remote searches
-  if (isRemote) {
-    searches.push(searchRemotive(broadQuery));
-  }
-
-  const results = await Promise.all(searches);
-  const allJobs = results.flat();
-
-  // Deduplicate by company+title similarity
-  const seen = new Set<string>();
-  return allJobs.filter((job) => {
-    const key = `${job.company.toLowerCase().trim().slice(0, 30)}::${job.title.toLowerCase().trim().slice(0, 50)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-// ─── Session state helpers ───────────────────────────────────────────────────
-
-async function loadSessionContext(userId: string, sessionId: string) {
-  const supabase = getServiceClient();
-
-  const [sessionRes, appsRes, resumeRes] = await Promise.all([
-    // Load current session
-    supabase
-      .from("agent_sessions")
-      .select("messages, summary")
-      .eq("user_id", userId)
-      .eq("session_id", sessionId)
-      .single(),
-    // Load recent applications
-    supabase
-      .from("applications")
-      .select("company, job_title, status")
-      .eq("user_id", userId)
-      .order("applied_at", { ascending: false })
-      .limit(20),
-    // Load resume from DB
-    supabase
-      .from("resumes")
-      .select("parsed_json")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single(),
-  ]);
-
-  return {
-    sessionMessages: sessionRes.data?.messages || [],
-    sessionSummary: sessionRes.data?.summary || "",
-    recentApplications: appsRes.data || [],
-    resumeFromDb: resumeRes.data?.parsed_json || null,
-  };
-}
-
-async function saveSessionState(
-  userId: string,
-  sessionId: string,
-  command: string,
-  agentResponse: string
-) {
-  const supabase = getServiceClient();
-
-  // Load existing session
-  const { data: existing } = await supabase
-    .from("agent_sessions")
-    .select("id, messages")
-    .eq("user_id", userId)
-    .eq("session_id", sessionId)
-    .single();
-
-  const messages = existing?.messages || [];
-  messages.push(
-    { role: "user", text: command, at: new Date().toISOString() },
-    { role: "agent", text: agentResponse.slice(0, 500), at: new Date().toISOString() }
-  );
-
-  // Keep only last 20 messages to avoid bloat
-  const trimmed = messages.slice(-20);
-
-  if (existing) {
-    await supabase
-      .from("agent_sessions")
-      .update({ messages: trimmed, updated_at: new Date().toISOString() })
-      .eq("id", existing.id);
-  } else {
-    await supabase.from("agent_sessions").insert({
-      user_id: userId,
-      session_id: sessionId,
-      messages: trimmed,
-    });
-  }
-}
+// Search, scoring, and session functions extracted to:
+// - lib/job-search.ts
+// - lib/job-scoring.ts
+// - lib/session.ts
 
 // ─── Tool handlers ───────────────────────────────────────────────────────────
 
@@ -589,7 +25,8 @@ async function handleToolCall(
   toolName: string,
   toolInput: Record<string, unknown>,
   userId: string,
-  resumeData: Record<string, unknown> | null
+  resumeData: Record<string, unknown> | null,
+  sessionId?: string
 ): Promise<string> {
   const supabase = getServiceClient();
 
@@ -636,25 +73,22 @@ async function handleToolCall(
           resume_summary: string;
         };
 
-      const resp = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        messages: [
-          {
-            role: "user",
-            content: `Write a concise, professional cover letter for a ${job_title} position at ${company}.
+      const resp = await complete(
+        {
+          system: "You are a professional cover letter writer. Write compelling, specific cover letters.",
+          userMessage: `Write a concise, professional cover letter for a ${job_title} position at ${company}.
 
 Job description: ${job_description}
 
 Candidate resume summary: ${resume_summary}
 
 Write it in first person, keep it under 300 words. Be specific about why this candidate is a fit. No generic filler.`,
-          },
-        ],
-      });
+          maxTokens: 1024,
+        },
+        "cover_letter"
+      );
 
-      const letter =
-        resp.content[0].type === "text" ? resp.content[0].text : "";
+      const letter = resp.text;
       return JSON.stringify({ cover_letter: letter });
     }
 
@@ -711,67 +145,166 @@ Write it in first person, keep it under 300 words. Be specific about why this ca
     }
 
     case "write_cold_email": {
-      const { recruiter_name, company, role_interest, resume_summary } =
-        toolInput as {
-          recruiter_name: string;
-          company: string;
-          role_interest: string;
-          resume_summary?: string;
-        };
+      const {
+        recruiter_name, recipient_title, recipient_context,
+        company, company_domain, role_interest, resume_summary,
+        relevant_projects, company_tech_stack,
+      } = toolInput as {
+        recruiter_name: string;
+        recipient_title?: string;
+        recipient_context?: string;
+        company: string;
+        company_domain?: string;
+        role_interest: string;
+        resume_summary?: string;
+        relevant_projects?: { name: string; url: string; description: string; tech_stack: string[] }[];
+        company_tech_stack?: string[];
+      };
 
-      const resp = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 512,
-        messages: [
-          {
-            role: "user",
-            content: `Write a short, personalized cold email to ${recruiter_name} at ${company} expressing interest in ${role_interest} roles.
+      // Build enriched context using email personalizer
+      let emailContext = "";
+      try {
+        const { buildEmailContext } = await import("@/lib/email-personalizer");
+        emailContext = await buildEmailContext({
+          recipientName: recruiter_name,
+          recipientTitle: recipient_title || "",
+          recipientContext: recipient_context,
+          company,
+          companyDomain: company_domain,
+          roleInterest: role_interest,
+          candidateSummary: resume_summary || (resumeData as { summary?: string })?.summary || "Experienced professional",
+          candidateSkills: (resumeData as { skills?: string[] })?.skills || [],
+          relevantProjects: relevant_projects || [],
+          companyTechStack: company_tech_stack,
+        });
+      } catch {
+        // Fallback to basic context
+        emailContext = `Recipient: ${recruiter_name}${recipient_title ? `, ${recipient_title}` : ""} at ${company}\nRole: ${role_interest}\n${resume_summary || ""}`;
+      }
 
-${resume_summary ? `Candidate summary: ${resume_summary}` : ""}
+      const resp = await complete(
+        {
+          system: "You are a cold email expert. Write genuine, personalized outreach emails.",
+          userMessage: `Write a cold email based on this context. Return ONLY the email body — no subject line.
 
-Keep it under 150 words. Be genuine, not salesy. Include a clear ask (e.g., 15-minute chat). No subject line — just the body.`,
-          },
-        ],
-      });
+${emailContext}
 
-      const body =
-        resp.content[0].type === "text" ? resp.content[0].text : "";
+RULES:
+- Under 150 words. Genuine, not salesy. Varied sentence lengths.
+- Reference the recipient's specific role or work if context is available
+- If relevant projects are listed, mention 1-2 with their URLs naturally in the text
+- Include a clear, specific ask (e.g., "Would you be open to a 15-minute chat this week?")
+- Sound like a real person wrote it — no corporate jargon, no "I hope this email finds you well"
+- No "As an AI" or similar phrases
+- Use the recipient's first name naturally
+- If writing to an engineer, be technical and peer-to-peer
+- If writing to a recruiter, be professional but warm
+- If writing to an executive, be brief and vision-aligned`,
+          maxTokens: 800,
+        },
+        "email_draft"
+      );
+
+      const emailBody = resp.text;
       return JSON.stringify({
-        email_body: body,
-        subject: `${role_interest} opportunity at ${company}`,
+        email_body: emailBody,
+        subject: `${role_interest} — ${company}`,
         to_name: recruiter_name,
+        recipient_title: recipient_title || "",
+        projects_included: (relevant_projects || []).map(p => ({ name: p.name, url: p.url })),
       });
     }
 
     case "send_email": {
-      const { to_email, to_name, subject, body } = toolInput as {
+      const {
+        to_email, to_name, subject, body, company,
+        recipient_title, attach_resume, project_links,
+        schedule_followup_days,
+      } = toolInput as {
         to_email: string;
         to_name?: string;
         subject: string;
         body: string;
+        company?: string;
+        recipient_title?: string;
+        attach_resume?: boolean;
+        project_links?: { name: string; url: string }[];
+        schedule_followup_days?: number;
       };
 
       try {
+        // Build attachments if resume requested
+        const attachments: { filename: string; content: string; content_type: string }[] = [];
+
+        if (attach_resume) {
+          // Fetch resume from DB
+          const { data: resume } = await supabase
+            .from("resumes")
+            .select("file_url")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+
+          if (resume?.file_url) {
+            // file_url is a data URI: "data:application/pdf;base64,..."
+            const base64Match = (resume.file_url as string).match(/^data:[^;]+;base64,(.+)$/);
+            if (base64Match) {
+              attachments.push({
+                filename: "resume.pdf",
+                content: base64Match[1],
+                content_type: "application/pdf",
+              });
+            }
+          }
+        }
+
+        // Get sender name from resume
+        const parsedResume = resumeData as { name?: string } | null;
+        const fromName = parsedResume?.name || "JobAgent User";
+
         await sendColdEmail({
           to: to_email,
           toName: to_name,
           subject,
           body,
-          fromName: "JobAgent User",
+          fromName,
+          attachments: attachments.length > 0 ? attachments : undefined,
         });
 
-        await supabase.from("recruiter_emails").insert({
+        // Save to DB with enriched metadata
+        const { data: emailRecord } = await supabase.from("recruiter_emails").insert({
           user_id: userId,
           recruiter_name: to_name || null,
           recruiter_email: to_email,
+          company: company || null,
           subject,
           body,
           status: "sent",
-        });
+          recipient_title: recipient_title || null,
+          has_attachment: attachments.length > 0,
+          project_links: project_links || null,
+          thread_id: `thread_${Date.now()}`,
+        }).select("id").single();
+
+        // Schedule follow-up if requested
+        const followupDays = schedule_followup_days ?? 5;
+        if (followupDays > 0 && emailRecord?.id) {
+          const scheduledAt = new Date(Date.now() + followupDays * 24 * 60 * 60 * 1000);
+          await supabase.from("email_followups").insert({
+            user_id: userId,
+            original_email_id: emailRecord.id,
+            scheduled_at: scheduledAt.toISOString(),
+            followup_number: 1,
+            status: "scheduled",
+          });
+        }
 
         return JSON.stringify({
           success: true,
-          message: `Email sent to ${to_email}`,
+          message: `Email sent to ${to_email}${attachments.length > 0 ? " with resume attached" : ""}.${followupDays > 0 ? ` Follow-up scheduled in ${followupDays} days.` : ""}`,
+          has_attachment: attachments.length > 0,
+          followup_scheduled: followupDays > 0,
         });
       } catch (err) {
         return JSON.stringify({
@@ -839,8 +372,25 @@ Keep it under 150 words. Be genuine, not salesy. Include a clear ask (e.g., 15-m
       const title = toolInput.title as string;
       const location = (toolInput.location as string) || "remote";
       const keywords = (toolInput.keywords as string[]) || [];
-      const maxApps = Math.min((toolInput.max_applications as number) || 5, 10);
       const minScore = (toolInput.min_match_score as number) || 60;
+
+      // Check daily cap (20 applications/day)
+      const MAX_DAILY_APPS = 20;
+      const { data: todaysRuns } = await supabase
+        .from("pipeline_runs")
+        .select("applications_queued")
+        .eq("user_id", userId)
+        .eq("run_date", new Date().toISOString().split("T")[0]);
+      const todaysTotal = (todaysRuns || []).reduce((sum: number, r: { applications_queued: number }) => sum + (r.applications_queued || 0), 0);
+      const remainingCap = Math.max(0, MAX_DAILY_APPS - todaysTotal);
+      const maxApps = Math.min((toolInput.max_applications as number) || 5, 10, remainingCap);
+
+      if (maxApps === 0) {
+        return JSON.stringify({
+          error: "Daily application cap reached (20/day). Try again tomorrow.",
+          today_total: todaysTotal,
+        });
+      }
 
       const resumeSummary = (resumeData as { summary?: string })?.summary || "Experienced professional";
       const skills = (resumeData as { skills?: string[] })?.skills || [];
@@ -920,7 +470,7 @@ Keep it under 150 words. Be genuine, not salesy. Include a clear ask (e.g., 15-m
           // Generate full apply pack in one Claude call
           try {
             const resp = await anthropic.messages.create({
-              model: "claude-sonnet-4-20250514",
+              model: CLAUDE_MODEL,
               max_tokens: 2500,
               messages: [
                 {
@@ -999,7 +549,7 @@ JSON format:
           }
         }
 
-        // Log if authenticated
+        // Log + record pipeline run for daily cap
         if (userId !== "anonymous") {
           await supabase.from("agent_logs").insert({
             user_id: userId,
@@ -1007,11 +557,21 @@ JSON format:
             action: `Generated ${pipeline.apply_packs.length} apply packs`,
             result: { summary: pipeline },
           });
+
+          await supabase.from("pipeline_runs").insert({
+            user_id: userId,
+            trigger: "agent",
+            jobs_found: pipeline.jobs_found,
+            jobs_matched: pipeline.jobs_matched,
+            packs_generated: pipeline.apply_packs.length,
+            applications_queued: pipeline.apply_packs.length,
+          });
         }
 
         return JSON.stringify({
           ...pipeline,
-          message: `Pipeline complete! Found ${pipeline.jobs_found} jobs, ${pipeline.jobs_matched} matched your resume (score >= ${minScore}). Generated ${pipeline.apply_packs.length} apply packs with cover letters, tailored resume bullets, and outreach emails. Click each apply link and use the materials to submit your application.`,
+          daily_remaining: remainingCap - pipeline.apply_packs.length,
+          message: `Pipeline complete! Found ${pipeline.jobs_found} jobs, ${pipeline.jobs_matched} matched your resume (score >= ${minScore}). Generated ${pipeline.apply_packs.length} apply packs. ${remainingCap - pipeline.apply_packs.length} applications remaining today (cap: ${MAX_DAILY_APPS}/day). Applications are queued — review them in the Queue dashboard.`,
         });
       } catch (err) {
         return JSON.stringify({
@@ -1055,18 +615,16 @@ JSON format:
         const daysAgo = Math.floor((Date.now() - new Date(app.applied_at).getTime()) / (1000 * 60 * 60 * 24));
 
         try {
-          const resp = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 300,
-            messages: [
-              {
-                role: "user",
-                content: `Write a brief follow-up email (under 80 words) for a ${app.job_title} role at ${app.company} that was applied to ${daysAgo} days ago. Candidate: ${resumeSummary}. Be polite, express continued interest, ask about timeline. Just the body.`,
-              },
-            ],
-          });
+          const resp = await complete(
+            {
+              system: "You are a professional email writer. Write concise follow-up emails.",
+              userMessage: `Write a brief follow-up email (under 80 words) for a ${app.job_title} role at ${app.company} that was applied to ${daysAgo} days ago. Candidate: ${resumeSummary}. Be polite, express continued interest, ask about timeline. Just the body.`,
+              maxTokens: 300,
+            },
+            "email_draft"
+          );
 
-          const body = resp.content[0].type === "text" ? resp.content[0].text : "";
+          const body = resp.text;
           followUps.push({
             company: app.company,
             job_title: app.job_title,
@@ -1109,7 +667,7 @@ JSON format:
       try {
         // Generate all apply pack materials in one Claude call for speed
         const resp = await anthropic.messages.create({
-          model: "claude-sonnet-4-20250514",
+          model: CLAUDE_MODEL,
           max_tokens: 3000,
           messages: [
             {
@@ -1219,17 +777,15 @@ Return ONLY the JSON, no markdown fences.`,
           undefined
         );
 
-        // Store plan for confirmation step
-        const planId = `plan_${Date.now()}`;
-        pendingPlans.set(planId, result.plan);
+        const docResult = result.plan.steps.find((s) => s.agent === "document_manager")?.result;
+        const formResult = result.plan.steps.find((s) => s.agent === "form_filler")?.result;
+        const matchResult = result.plan.steps.find((s) => s.agent === "job_matcher")?.result;
+        const matchScore = matchResult?.data?.score || matchResult?.data?.match_score || 0;
 
-        // Also save the apply pack to DB
+        // Save the apply pack to DB
+        let applyPackId: string | undefined;
         if (result.plan.steps.every((s) => s.status !== "error")) {
-          const docResult = result.plan.steps.find((s) => s.agent === "document_manager")?.result;
-          const formResult = result.plan.steps.find((s) => s.agent === "form_filler")?.result;
-          const matchResult = result.plan.steps.find((s) => s.agent === "job_matcher")?.result;
-
-          await supabase.from("apply_packs").insert({
+          const { data: packData } = await supabase.from("apply_packs").insert({
             user_id: userId,
             job_title,
             company,
@@ -1239,11 +795,51 @@ Return ONLY the JSON, no markdown fences.`,
             why_good_fit: matchResult?.data?.reason || matchResult?.data?.justification || "",
             common_answers: formResult?.data || {},
             source: "orchestrator",
-          });
+          }).select("id").single();
+          applyPackId = packData?.id;
         }
+
+        // Record application with "queued" status
+        const { data: app } = await supabase.from("applications").insert({
+          user_id: userId,
+          job_title,
+          company,
+          job_url,
+          status: "queued",
+        }).select("id").single();
+
+        // Persist plan in application_queue (survives restarts)
+        const planId = `plan_${Date.now()}`;
+        await supabase.from("application_queue").insert({
+          id: planId,
+          user_id: userId,
+          application_id: app?.id,
+          apply_pack_id: applyPackId,
+          job_url,
+          job_title,
+          company,
+          match_score: matchScore,
+          status: "pending_review",
+          form_snapshot: {
+            plan_steps: result.plan.steps.map((s) => ({
+              agent: s.agent,
+              status: s.status,
+              data: s.result?.data || {},
+            })),
+            form_fill_data: formResult?.data || {},
+          },
+        });
+
+        // Cleanup: delete expired queue items (older than 7 days, failed/rejected)
+        await supabase.from("application_queue")
+          .delete()
+          .eq("user_id", userId)
+          .in("status", ["failed", "rejected"])
+          .lt("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
         return JSON.stringify({
           plan_id: planId,
+          application_id: app?.id,
           needs_confirmation: result.needsConfirmation,
           confirmation_message: result.confirmationMessage,
           steps: result.plan.steps.map((s) => ({
@@ -1253,9 +849,8 @@ Return ONLY the JSON, no markdown fences.`,
             summary: s.result?.message || "",
             data: s.result?.data || {},
           })),
-          // Include form fill data for the extension
-          form_fill_data: result.plan.steps.find((s) => s.agent === "form_filler")?.result?.data,
-          match_score: result.plan.steps.find((s) => s.agent === "job_matcher")?.result?.data,
+          form_fill_data: formResult?.data,
+          match_score: matchScore,
         });
       } catch (err) {
         return JSON.stringify({ error: "Orchestration failed", detail: String(err) });
@@ -1265,39 +860,54 @@ Return ONLY the JSON, no markdown fences.`,
     case "confirm_application": {
       const { plan_id } = toolInput as { plan_id: string; modifications?: string };
 
-      const plan = pendingPlans.get(plan_id);
-      if (!plan) {
+      // Read plan from application_queue (persistent DB storage)
+      const { data: queueItem } = await supabase
+        .from("application_queue")
+        .select("*")
+        .eq("id", plan_id)
+        .eq("user_id", userId)
+        .single();
+
+      if (!queueItem) {
         return JSON.stringify({ error: "No pending plan found. The plan may have expired — run orchestrate_application again." });
       }
 
       try {
-        // Record the application
-        const { data: app } = await supabase
-          .from("applications")
-          .insert({
-            user_id: userId,
-            job_title: plan.jobTitle,
-            company: plan.company,
-            job_url: plan.jobUrl,
-            status: "ready",
-          })
-          .select()
-          .single();
+        // Update application status to "ready" (confirmed, awaiting form fill)
+        if (queueItem.application_id) {
+          await supabase.from("applications")
+            .update({ status: "ready" })
+            .eq("id", queueItem.application_id);
+        }
 
-        pendingPlans.delete(plan_id);
+        // Update queue status to "approved"
+        await supabase.from("application_queue")
+          .update({ status: "approved", reviewed_at: new Date().toISOString() })
+          .eq("id", plan_id);
 
-        // Get form fill data to send to extension
-        const formStep = plan.steps.find((s) => s.agent === "form_filler");
+        const formFillData = queueItem.form_snapshot?.form_fill_data || {};
+
+        // Push to extension via SSE for auto-fill
+        extensionEvents.publish(sessionId || userId, {
+          type: "form_fill",
+          data: {
+            queueId: plan_id,
+            jobUrl: queueItem.job_url,
+            company: queueItem.company,
+            jobTitle: queueItem.job_title,
+            formFillData: formFillData,
+          },
+        });
 
         return JSON.stringify({
           success: true,
-          application_id: app?.id,
-          message: `Application confirmed for ${plan.jobTitle} at ${plan.company}! Click "Auto-Fill" in the JobAgent extension on the application page to fill the form automatically.`,
-          apply_url: plan.jobUrl,
-          form_fill_data: formStep?.result?.data || {},
+          application_id: queueItem.application_id,
+          message: `Application confirmed for ${queueItem.job_title} at ${queueItem.company}! The extension will auto-fill the form. Review and click submit when ready.`,
+          apply_url: queueItem.job_url,
+          form_fill_data: formFillData,
           pack: {
-            company: plan.company,
-            title: plan.jobTitle,
+            company: queueItem.company,
+            title: queueItem.job_title,
           },
         });
       } catch (err) {
@@ -1325,7 +935,7 @@ Return ONLY the JSON, no markdown fences.`,
       try {
         // Call the gmail scan endpoint internally
         const sessionId = userId.startsWith("anon_") ? userId.slice(5) : "";
-        const scanRes = await fetch(`http://localhost:${process.env.PORT || 3000}/api/gmail/scan`, {
+        const scanRes = await fetch(`${getBaseUrl()}/api/gmail/scan`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId }),
@@ -1362,6 +972,170 @@ Return ONLY the JSON, no markdown fences.`,
       }
     }
 
+    // ─── Contact discovery ──────────────────────────────────────────────────
+    case "find_contacts": {
+      const { company, domain, roles } = toolInput as {
+        company: string;
+        domain?: string;
+        roles?: string[];
+      };
+
+      try {
+        const { discoverContacts } = await import("@/lib/contacts");
+        const contacts = await discoverContacts(company, domain, roles);
+
+        // Save to DB
+        for (const contact of contacts) {
+          if (!contact.email) continue;
+          await supabase.from("company_contacts").upsert(
+            {
+              user_id: userId,
+              company,
+              company_domain: domain || null,
+              person_name: contact.person_name,
+              title: contact.title,
+              email: contact.email,
+              linkedin_url: contact.linkedin_url || null,
+              source: contact.source,
+              confidence: contact.confidence,
+            },
+            { onConflict: "user_id,company,email" }
+          );
+        }
+
+        return JSON.stringify({
+          contacts: contacts.slice(0, 15),
+          total_found: contacts.length,
+          message: contacts.length > 0
+            ? `Found ${contacts.length} contacts at ${company}. ${contacts.filter(c => c.email).length} have email addresses. Use write_cold_email to reach out to them.`
+            : `No contacts found for ${company}. Try providing the company domain directly.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: "Contact discovery failed: " + String(err) });
+      }
+    }
+
+    // ─── Application queue management ──────────────────────────────────────
+    case "review_queue": {
+      const { action, queue_id, min_score } = toolInput as {
+        action: string;
+        queue_id?: string;
+        min_score?: number;
+      };
+
+      try {
+        if (action === "list") {
+          const { data: items } = await supabase
+            .from("application_queue")
+            .select("id, job_title, company, match_score, status, fields_filled, fields_total, resume_uploaded, created_at, error_message")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(20);
+
+          const summary = {
+            pending_fill: 0,
+            filled: 0,
+            pending_review: 0,
+            approved: 0,
+            submitted: 0,
+            failed: 0,
+          };
+          for (const item of items || []) {
+            if (item.status in summary) summary[item.status as keyof typeof summary]++;
+          }
+
+          return JSON.stringify({
+            items: items || [],
+            summary,
+            message: `Queue: ${summary.pending_review} ready for review, ${summary.pending_fill} pending fill, ${summary.approved} approved, ${summary.submitted} submitted, ${summary.failed} failed.`,
+          });
+        }
+
+        if (action === "approve" && queue_id) {
+          await supabase
+            .from("application_queue")
+            .update({ status: "approved", reviewed_at: new Date().toISOString() })
+            .eq("id", queue_id)
+            .eq("user_id", userId);
+
+          // Get item details for SSE push
+          const { data: item } = await supabase
+            .from("application_queue")
+            .select("*")
+            .eq("id", queue_id)
+            .single();
+
+          if (item) {
+            extensionEvents.publish(userId, {
+              type: "submit_approved",
+              data: {
+                queueId: queue_id,
+                jobUrl: item.job_url,
+                company: item.company,
+                jobTitle: item.job_title,
+              },
+            });
+          }
+
+          return JSON.stringify({ success: true, message: `Approved: ${item?.job_title} at ${item?.company}` });
+        }
+
+        if (action === "reject" && queue_id) {
+          await supabase
+            .from("application_queue")
+            .update({ status: "rejected", reviewed_at: new Date().toISOString() })
+            .eq("id", queue_id)
+            .eq("user_id", userId);
+
+          return JSON.stringify({ success: true, message: "Application rejected." });
+        }
+
+        if (action === "approve_all") {
+          const threshold = min_score || 70;
+          const { data: items } = await supabase
+            .from("application_queue")
+            .select("id, job_title, company, job_url, match_score")
+            .eq("user_id", userId)
+            .eq("status", "pending_review")
+            .gte("match_score", threshold);
+
+          if (!items || items.length === 0) {
+            return JSON.stringify({ message: `No pending_review items with score >= ${threshold}.` });
+          }
+
+          const ids = items.map(i => i.id);
+          await supabase
+            .from("application_queue")
+            .update({ status: "approved", reviewed_at: new Date().toISOString() })
+            .in("id", ids)
+            .eq("user_id", userId);
+
+          // Push submit events for each
+          for (const item of items) {
+            extensionEvents.publish(userId, {
+              type: "submit_approved",
+              data: {
+                queueId: item.id,
+                jobUrl: item.job_url,
+                company: item.company,
+                jobTitle: item.job_title,
+              },
+            });
+          }
+
+          return JSON.stringify({
+            success: true,
+            approved: items.length,
+            message: `Approved ${items.length} applications with score >= ${threshold}. The extension will submit them.`,
+          });
+        }
+
+        return JSON.stringify({ error: "Invalid action. Use: list, approve, reject, approve_all" });
+      } catch (err) {
+        return JSON.stringify({ error: "Queue operation failed: " + String(err) });
+      }
+    }
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }
@@ -1384,10 +1158,15 @@ export async function POST(request: Request) {
     // Auth may be misconfigured — continue with anonymous ID
   }
 
-  const { command, resumeData, sessionId, chatHistory } = await request.json();
-  if (!command) {
-    return new Response("Missing command", { status: 400 });
-  }
+  const rawBody = await request.json();
+  const validated = validateRequest(AgentCommandSchema, rawBody);
+  if (!validated.success) return validated.error;
+  const { command, resumeData, sessionId, chatHistory } = validated.data;
+
+  // Rate limit: 20 requests/min per user
+  const rlKey = userId || request.headers.get("x-forwarded-for") || "anonymous";
+  const rl = rateLimit(`agent:${rlKey}`, 20, 60_000);
+  if (!rl.success) return rateLimitResponse(rl.resetAt);
 
   const sid = sessionId || crypto.randomUUID();
 
@@ -1411,7 +1190,11 @@ export async function POST(request: Request) {
     ctx = await loadSessionContext(userId, sid);
 
     // Merge resume: prefer DB version → client-sent localStorage data → null
-    const resume = ctx.resumeFromDb || resumeData || null;
+    const resume = (ctx.resumeFromDb || resumeData || null) as {
+      summary?: string;
+      skills?: string[];
+      experience?: unknown[];
+    } | null;
 
     // Build conversation history: prefer DB session messages, fall back to client localStorage
     const dbHistory = (ctx.sessionMessages || []).map((m: { role: string; content?: string; text?: string }) => ({
@@ -1438,7 +1221,7 @@ export async function POST(request: Request) {
     ];
 
     let response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: CLAUDE_MODEL,
       max_tokens: 4096,
       system: systemPrompt,
       tools: AGENT_TOOLS,
@@ -1462,7 +1245,8 @@ export async function POST(request: Request) {
             block.name,
             block.input as Record<string, unknown>,
             userId,
-            resume
+            resume,
+            sessionId
           );
 
           // Extract apply packs from tool results
@@ -1498,7 +1282,7 @@ export async function POST(request: Request) {
       messages.push({ role: "user", content: toolResults });
 
       response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: CLAUDE_MODEL,
         max_tokens: 4096,
         system: systemPrompt,
         tools: AGENT_TOOLS,

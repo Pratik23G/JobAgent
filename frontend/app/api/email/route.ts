@@ -2,6 +2,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { sendColdEmail } from "@/lib/resend";
 import { getServiceClient } from "@/lib/db";
+import { EmailSendSchema, validateRequest } from "@/lib/validation";
+import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
@@ -14,13 +16,14 @@ export async function POST(request: Request) {
     return new Response("Missing user ID", { status: 400 });
   }
 
-  const { to_email, to_name, subject, body, company } = await request.json();
+  // Rate limit: 10 emails/min per user
+  const rl = rateLimit(`email:${userId}`, 10, 60_000);
+  if (!rl.success) return rateLimitResponse(rl.resetAt);
 
-  if (!to_email || !subject || !body) {
-    return new Response("Missing required fields: to_email, subject, body", {
-      status: 400,
-    });
-  }
+  const rawBody = await request.json();
+  const validated = validateRequest(EmailSendSchema, rawBody);
+  if (!validated.success) return validated.error;
+  const { to_email, to_name, subject, body, company } = validated.data;
 
   try {
     await sendColdEmail({

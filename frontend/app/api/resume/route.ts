@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { anthropic } from "@/lib/claude";
+import { CLAUDE_MODEL } from "@/lib/models";
 import { getServiceClient } from "@/lib/db";
 
 export async function POST(request: Request) {
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
 
   // Send to Claude for parsing
   const message = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: CLAUDE_MODEL,
     max_tokens: 2048,
     messages: [
       {

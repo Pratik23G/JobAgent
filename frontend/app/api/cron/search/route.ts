@@ -1,7 +1,13 @@
 import { anthropic } from "@/lib/claude";
+import { CLAUDE_MODEL } from "@/lib/models";
 import { getServiceClient } from "@/lib/db";
+import { extensionEvents } from "@/lib/events";
+import { complete } from "@/lib/models";
+import { validateCronSecret } from "@/lib/cron-auth";
+import { searchAdzuna } from "@/lib/job-search";
+import { scoreJobs as scoreJobsShared } from "@/lib/job-scoring";
 
-// ─── Daily Job Digest Endpoint ──────────────────────────────────────────────
+// ─── Daily Job Digest + Auto-Apply Pipeline ─────────────────────────────────
 // Trigger via: GET /api/cron/search?secret=YOUR_CRON_SECRET
 // Set up with cron-job.org, Vercel Cron, or any scheduler to run daily.
 //
@@ -10,112 +16,17 @@ import { getServiceClient } from "@/lib/db";
 // 2. For each user, searches jobs matching their skills
 // 3. Scores results against their resume
 // 4. Stores top matches in a new "digest" for the user
-// 5. Optionally sends email via Resend
+// 5. For high-scoring matches (>= 70), auto-generates apply packs
+// 6. Queues applications for extension auto-fill + human approval
 
-const LOCATION_MAP: Record<string, string> = {
-  "bay area": "San Francisco",
-  sf: "San Francisco",
-  nyc: "New York",
-  la: "Los Angeles",
-  dc: "Washington",
-  remote: "",
-};
+const MAX_DAILY_APPLICATIONS = 20;
+const AUTO_APPLY_MIN_SCORE = 70;
 
-async function searchAdzunaForDigest(query: string, location: string) {
-  const appId = process.env.ADZUNA_APP_ID;
-  const appKey = process.env.ADZUNA_API_KEY;
-  if (!appId || !appKey) return [];
-
-  const mappedLocation = LOCATION_MAP[location.toLowerCase()] ?? location;
-
-  for (const maxDays of [3, 7]) {
-    try {
-      const url = `https://api.adzuna.com/v1/api/jobs/us/search/1?app_id=${appId}&app_key=${appKey}&results_per_page=10&max_days_old=${maxDays}&sort_by=date&what=${encodeURIComponent(query)}&where=${encodeURIComponent(mappedLocation)}&content-type=application/json`;
-      const res = await fetch(url);
-      const data = await res.json();
-      const jobs = (data.results || []).map(
-        (j: {
-          title: string;
-          company?: { display_name?: string };
-          location?: { display_name?: string };
-          redirect_url?: string;
-          description?: string;
-          salary_min?: number;
-          salary_max?: number;
-          created?: string;
-        }) => {
-          const company = j.company?.display_name || "Unknown";
-          const descUrls = (j.description || "").match(/https?:\/\/[^\s<>"]+/);
-          const applyUrl =
-            descUrls?.[0] ||
-            `https://www.google.com/search?q=${encodeURIComponent(`${company} ${j.title} apply`)}`;
-          return {
-            title: j.title,
-            company,
-            location: j.location?.display_name || "",
-            url: applyUrl,
-            description: (j.description || "").slice(0, 300),
-            salary_min: j.salary_min,
-            salary_max: j.salary_max,
-            source: "adzuna",
-            posted_date: j.created || "",
-          };
-        }
-      );
-      if (jobs.length > 0) return jobs;
-    } catch {
-      continue;
-    }
-  }
-  return [];
-}
-
-async function scoreJobs(
-  jobs: { title: string; company: string; description: string }[],
-  resume: { summary?: string; skills?: string[] }
-) {
-  if (!resume?.skills?.length || jobs.length === 0) return jobs.map((j) => ({ ...j, match_score: 50, match_reason: "" }));
-
-  try {
-    const resp = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1500,
-      messages: [
-        {
-          role: "user",
-          content: `Score each job 0-100 against this resume. Return ONLY a JSON array.
-Resume skills: ${resume.skills.join(", ")}
-Summary: ${resume.summary || "N/A"}
-
-Jobs:
-${jobs.map((j, i) => `${i}. ${j.title} at ${j.company}: ${j.description}`).join("\n")}
-
-Return: [{"index": 0, "match_score": 85, "reason": "..."}]
-ONLY valid JSON.`,
-        },
-      ],
-    });
-
-    const text = resp.content[0].type === "text" ? resp.content[0].text : "[]";
-    const scores: { index: number; match_score: number; reason: string }[] = JSON.parse(text);
-    return jobs.map((job, i) => {
-      const s = scores.find((x) => x.index === i);
-      return { ...job, match_score: s?.match_score ?? 50, match_reason: s?.reason ?? "" };
-    });
-  } catch {
-    return jobs.map((j) => ({ ...j, match_score: 50, match_reason: "" }));
-  }
-}
+// Search and scoring functions imported from shared modules above
 
 export async function GET(request: Request) {
-  // Verify cron secret to prevent unauthorized access
-  const { searchParams } = new URL(request.url);
-  const secret = searchParams.get("secret");
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (cronSecret && secret !== cronSecret) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  const authError = validateCronSecret(request);
+  if (authError) return authError;
 
   const supabase = getServiceClient();
 
@@ -130,7 +41,7 @@ export async function GET(request: Request) {
       return Response.json({ message: "No users with resumes found", digests: 0 });
     }
 
-    const results: { userId: string; jobsFound: number; topMatches: number }[] = [];
+    const results: { userId: string; jobsFound: number; topMatches: number; applicationsQueued?: number }[] = [];
 
     for (const resume of resumes) {
       const parsed = resume.parsed_json as { summary?: string; skills?: string[]; experience?: { title?: string }[] };
@@ -142,12 +53,12 @@ export async function GET(request: Request) {
       const searchQuery = recentTitle || topSkills || "software engineer";
 
       // Search for jobs
-      const jobs = await searchAdzunaForDigest(searchQuery, "");
+      const jobs = await searchAdzuna(searchQuery, "");
 
       if (jobs.length === 0) continue;
 
       // Score against resume
-      const scored = await scoreJobs(jobs, parsed);
+      const scored = await scoreJobsShared(jobs, parsed, 0);
       const topMatches = scored
         .filter((j) => j.match_score >= 60)
         .sort((a, b) => (b.match_score as number) - (a.match_score as number))
@@ -168,10 +79,136 @@ export async function GET(request: Request) {
         },
       });
 
+      // ─── Auto-apply for high-scoring matches ────────────────────────────
+      // Check daily cap
+      const { data: todaysRuns } = await supabase
+        .from("pipeline_runs")
+        .select("applications_queued")
+        .eq("user_id", resume.user_id)
+        .eq("run_date", new Date().toISOString().split("T")[0]);
+
+      const todaysTotal = (todaysRuns || []).reduce((sum, r) => sum + (r.applications_queued || 0), 0);
+      const remainingCap = Math.max(0, MAX_DAILY_APPLICATIONS - todaysTotal);
+
+      const autoApplyJobs = topMatches
+        .filter((j) => (j.match_score as number) >= AUTO_APPLY_MIN_SCORE)
+        .slice(0, remainingCap);
+
+      let applicationsQueued = 0;
+
+      for (const job of autoApplyJobs) {
+        // Check for duplicates
+        const { data: existing } = await supabase
+          .from("applications")
+          .select("id")
+          .eq("user_id", resume.user_id)
+          .ilike("company", `%${job.company}%`)
+          .ilike("job_title", `%${job.title}%`)
+          .limit(1);
+
+        if (existing && existing.length > 0) continue;
+
+        try {
+          // Generate apply pack via Claude
+          const resp = await anthropic.messages.create({
+            model: CLAUDE_MODEL,
+            max_tokens: 2500,
+            messages: [{
+              role: "user",
+              content: `Generate a job application package. Return ONLY valid JSON, no markdown fences.
+
+Job: ${job.title} at ${job.company}
+Job Description: ${job.description}
+Candidate Summary: ${parsed.summary || "Experienced professional"}
+Candidate Skills: ${(parsed.skills || []).join(", ")}
+
+JSON format:
+{
+  "cover_letter": "Professional cover letter under 200 words, specific to this role",
+  "resume_bullets": "5 tailored resume bullet points matching this JD, each starting with action verb",
+  "why_good_fit": "2-3 sentence explanation of why this candidate fits this role",
+  "outreach_email": "Cold email under 80 words to hiring manager, genuine, with clear ask",
+  "common_answers": {
+    "why_this_company": "2 sentences",
+    "why_this_role": "2 sentences"
+  }
+}`,
+            }],
+          });
+
+          const rawText = resp.content[0].type === "text" ? resp.content[0].text : "{}";
+          const cleaned = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+          const pack = JSON.parse(cleaned);
+
+          // Save application
+          const { data: appData } = await supabase
+            .from("applications")
+            .insert({
+              user_id: resume.user_id,
+              job_title: job.title,
+              company: job.company,
+              job_url: job.url,
+              cover_letter: pack.cover_letter || null,
+              status: "queued",
+              notes: `Auto-pipeline (cron). Score: ${job.match_score}. Source: ${job.source || "adzuna"}`,
+            })
+            .select("id")
+            .single();
+
+          // Save apply pack
+          const { data: packData } = await supabase
+            .from("apply_packs")
+            .insert({
+              user_id: resume.user_id,
+              application_id: appData?.id || null,
+              job_title: job.title,
+              company: job.company,
+              job_url: job.url,
+              cover_letter: pack.cover_letter,
+              resume_bullets: pack.resume_bullets,
+              why_good_fit: pack.why_good_fit,
+              common_answers: pack.common_answers,
+              outreach_email: pack.outreach_email,
+              source: job.source || "adzuna",
+            })
+            .select("id")
+            .single();
+
+          // Queue for auto-fill
+          await supabase.from("application_queue").insert({
+            user_id: resume.user_id,
+            application_id: appData?.id,
+            apply_pack_id: packData?.id,
+            job_url: job.url,
+            job_title: job.title,
+            company: job.company,
+            match_score: job.match_score,
+            status: "pending_fill",
+          });
+
+          applicationsQueued++;
+        } catch (err) {
+          console.error(`Failed to generate apply pack for ${job.company}:`, err);
+        }
+      }
+
+      // Record pipeline run
+      if (applicationsQueued > 0) {
+        await supabase.from("pipeline_runs").insert({
+          user_id: resume.user_id,
+          trigger: "cron",
+          jobs_found: jobs.length,
+          jobs_matched: topMatches.length,
+          packs_generated: applicationsQueued,
+          applications_queued: applicationsQueued,
+        });
+      }
+
       results.push({
         userId: resume.user_id,
         jobsFound: jobs.length,
         topMatches: topMatches.length,
+        applicationsQueued,
       });
     }
 

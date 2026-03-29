@@ -604,6 +604,41 @@ async function reportSubmission(pack, filledCount, resumeUploaded) {
   }
 }
 
+// ─── Capture form state: enumerate all fields + their current values ────────
+function captureFormState() {
+  const fields = [];
+  const inputs = document.querySelectorAll("input, textarea, select");
+  for (const input of inputs) {
+    if (input.type === "hidden" || input.type === "submit" || input.type === "file") continue;
+    if (!isVisible(input)) continue;
+
+    const label = input.closest(".field, .form-group, [class*='field']")?.querySelector("label")?.textContent?.trim() ||
+      (input.id && document.querySelector(`label[for="${input.id}"]`)?.textContent?.trim()) ||
+      input.getAttribute("aria-label") || input.placeholder || input.name || input.id || "";
+
+    fields.push({
+      tag: input.tagName.toLowerCase(),
+      type: input.type || "",
+      name: input.name || "",
+      id: input.id || "",
+      label: label.slice(0, 100),
+      required: input.required,
+      value: input.value || "",
+      filled: !!input.value,
+    });
+  }
+
+  return {
+    fields,
+    filledCount: fields.filter(f => f.filled).length,
+    totalCount: fields.length,
+    url: window.location.href,
+    title: document.title,
+    ats: detectATS(),
+    capturedAt: new Date().toISOString(),
+  };
+}
+
 // ─── Message handler ────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "fill_application") {
@@ -688,6 +723,77 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         report,
       });
     })();
+    return true;
+  }
+
+  // ─── Fill-only mode: fill fields + upload resume but do NOT submit ────────
+  if (message.action === "fill_only") {
+    (async () => {
+      const { pack, profile, ats, queueId } = message;
+      const detectedAts = ats || detectATS();
+
+      // Step 1: Fill fields
+      const fields = fillApplication(pack, profile, detectedAts);
+      const filled = fields.filter(f => f.filled).length;
+
+      // Step 2: Upload resume
+      const upload = await attemptResumeUpload();
+      if (upload.uploaded) fields.push({ name: "Resume Upload", filled: true });
+
+      // Step 3: Capture form snapshot (all field values for review)
+      const formSnapshot = captureFormState();
+
+      // Step 4: Report results back to background (NOT submitting)
+      const result = {
+        action: "fill_only_complete",
+        queueId,
+        fields,
+        filledCount: fields.filter(f => f.filled).length,
+        totalFields: formSnapshot.fields.length,
+        resumeUploaded: upload.uploaded,
+        formSnapshot,
+        ats: detectedAts,
+        pageUrl: window.location.href,
+      };
+
+      chrome.runtime.sendMessage(result).catch(() => {});
+      sendResponse(result);
+    })();
+    return true;
+  }
+
+  // ─── Submit-only: click submit after human approval ─────────────────────
+  if (message.action === "submit_approved") {
+    (async () => {
+      const { pack, filledCount, resumeUploaded, queueId } = message;
+
+      // Wait a moment for any pending form validation
+      await new Promise(r => setTimeout(r, 500));
+
+      const submit = await clickSubmitButton();
+
+      let report = null;
+      if (submit.submitted && pack) {
+        report = await reportSubmission(pack, filledCount || 0, resumeUploaded || false);
+      }
+
+      const result = {
+        action: "submit_approved_complete",
+        queueId,
+        submitted: submit.submitted,
+        submitReason: submit.reason,
+        report,
+      };
+
+      chrome.runtime.sendMessage(result).catch(() => {});
+      sendResponse(result);
+    })();
+    return true;
+  }
+
+  // ─── Capture current form state without modifying anything ──────────────
+  if (message.action === "capture_form_state") {
+    sendResponse({ formState: captureFormState(), ats: detectATS() });
     return true;
   }
 

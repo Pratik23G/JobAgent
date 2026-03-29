@@ -137,11 +137,156 @@ async function handleSSEEvent(event, dataStr) {
         console.log("[JobAgent] SSE stream confirmed for session:", data.sessionId);
         break;
 
+      case "auto_fill_request": {
+        // Autonomous pipeline: navigate to job URL, fill form (no submit), report back
+        const { queueId, jobUrl, jobTitle, company, matchScore, pack, profile, resumeFileUrl } = data;
+        console.log(`[JobAgent] Auto-fill request: ${jobTitle} at ${company} (score: ${matchScore})`);
+
+        // Add to fill queue (process sequentially to avoid overwhelming browser)
+        addToFillQueue({ queueId, jobUrl, jobTitle, company, pack, profile, resumeFileUrl });
+        break;
+      }
+
+      case "submit_approved": {
+        // Human approved — find the tab and click submit
+        const { queueId: approvedQueueId, jobUrl: approvedUrl } = data;
+        console.log(`[JobAgent] Submit approved for queue item: ${approvedQueueId}`);
+
+        // Find matching tab
+        const tabs = await chrome.tabs.query({});
+        const matchingTab = tabs.find(t => t.url && t.url.includes(new URL(approvedUrl).hostname));
+        if (matchingTab?.id) {
+          chrome.tabs.sendMessage(matchingTab.id, {
+            action: "submit_approved",
+            queueId: approvedQueueId,
+            pack: data.pack || {},
+            filledCount: data.filledCount || 0,
+            resumeUploaded: data.resumeUploaded || false,
+          }).catch(() => {});
+        }
+        break;
+      }
+
       default:
         console.log("[JobAgent] Unknown SSE event:", event, data);
     }
   } catch (err) {
     console.warn("[JobAgent] SSE event parse error:", err);
+  }
+}
+
+// ─── Auto-fill queue: process one job at a time ─────────────────────────────
+
+const fillQueue = [];
+let fillQueueRunning = false;
+const FILL_DELAY = 10000; // 10s between fills
+
+function addToFillQueue(item) {
+  fillQueue.push(item);
+  if (!fillQueueRunning) processFillQueue();
+}
+
+async function processFillQueue() {
+  if (fillQueue.length === 0) {
+    fillQueueRunning = false;
+    return;
+  }
+
+  fillQueueRunning = true;
+  const item = fillQueue.shift();
+
+  try {
+    await navigateAndFill(item);
+  } catch (err) {
+    console.error("[JobAgent] Fill failed:", err);
+    await reportFillResult(item.queueId, {
+      success: false,
+      error: err.message || String(err),
+    });
+  }
+
+  // Delay before next fill
+  if (fillQueue.length > 0) {
+    setTimeout(processFillQueue, FILL_DELAY);
+  } else {
+    fillQueueRunning = false;
+  }
+}
+
+async function navigateAndFill(item) {
+  const { queueId, jobUrl, pack, profile, resumeFileUrl } = item;
+
+  // Store resume if provided
+  if (resumeFileUrl) {
+    await chrome.storage.local.set({
+      resumeBlob: resumeFileUrl,
+      resumeFileName: "resume.pdf",
+      resumeType: "application/pdf",
+    });
+  }
+
+  // Open job URL in a new background tab
+  const tab = await chrome.tabs.create({ url: jobUrl, active: false });
+
+  // Wait for page to fully load
+  await new Promise((resolve) => {
+    const listener = (tabId, changeInfo) => {
+      if (tabId === tab.id && changeInfo.status === "complete") {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    // Timeout after 30s
+    setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    }, 30000);
+  });
+
+  // Wait an extra 2s for dynamic content (React/SPA rendering)
+  await new Promise(r => setTimeout(r, 2000));
+
+  // Inject content script
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+  } catch {
+    // Already injected via manifest match patterns — that's fine
+  }
+
+  await new Promise(r => setTimeout(r, 500));
+
+  // Send fill_only message (fills form, does NOT submit)
+  const ats = detectATS(jobUrl);
+  const result = await chrome.tabs.sendMessage(tab.id, {
+    action: "fill_only",
+    pack: pack || {},
+    profile: profile || {},
+    ats: ats || "Generic",
+    queueId,
+  });
+
+  // Report results back to the server
+  await reportFillResult(queueId, {
+    success: true,
+    fields_filled: result?.filledCount || 0,
+    fields_total: result?.totalFields || 0,
+    resume_uploaded: result?.resumeUploaded || false,
+    form_snapshot: result?.formSnapshot || null,
+    tab_id: tab.id,
+  });
+}
+
+async function reportFillResult(queueId, result) {
+  try {
+    const serverUrl = await getServerUrl();
+    await fetch(`${serverUrl}/api/queue/${queueId}/fill-result`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(result),
+    });
+  } catch (err) {
+    console.warn("[JobAgent] Failed to report fill result:", err);
   }
 }
 
@@ -234,6 +379,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "fill_complete") {
+    chrome.runtime.sendMessage(message).catch(() => {});
+    return true;
+  }
+
+  // Results from auto-fill (fill_only mode) — forward to popup
+  if (message.action === "fill_only_complete") {
+    chrome.runtime.sendMessage(message).catch(() => {});
+    return true;
+  }
+
+  // Results from submit_approved — forward to popup
+  if (message.action === "submit_approved_complete") {
     chrome.runtime.sendMessage(message).catch(() => {});
     return true;
   }

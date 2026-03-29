@@ -1,6 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic();
+import { complete, type TaskType, type CompletionResponse } from "./models";
 
 // ─── Sub-agent definitions ──────────────────────────────────────────────────
 
@@ -9,12 +7,13 @@ export interface SubAgentResult {
   status: "success" | "error" | "needs_confirmation";
   data: Record<string, unknown>;
   message: string;
+  provider?: string; // which model actually handled this
 }
 
 interface SubAgentConfig {
   name: string;
   systemPrompt: string;
-  tools: Anthropic.Tool[];
+  task: TaskType; // routes to the right model via models.ts
   maxTokens: number;
 }
 
@@ -22,6 +21,7 @@ interface SubAgentConfig {
 
 const resumeParserAgent: SubAgentConfig = {
   name: "resume_parser",
+  task: "resume_parse",
   systemPrompt: `You are the Resume Parser sub-agent. Your job is to extract structured data from resume text.
 
 Extract:
@@ -35,7 +35,6 @@ Extract:
 - Location / willingness to relocate
 
 Return ONLY valid JSON. No explanations.`,
-  tools: [],
   maxTokens: 2048,
 };
 
@@ -43,6 +42,7 @@ Return ONLY valid JSON. No explanations.`,
 
 const jobMatcherAgent: SubAgentConfig = {
   name: "job_matcher",
+  task: "job_match",
   systemPrompt: `You are the Job Matcher sub-agent. Your job is to analyze job listings against a candidate's resume and produce detailed match assessments.
 
 For each job:
@@ -53,7 +53,6 @@ For each job:
 5. Suggest which resume bullets to emphasize for this specific role
 
 Return ONLY valid JSON array. Be brutally honest — a 50 is average, 80+ is strong.`,
-  tools: [],
   maxTokens: 4096,
 };
 
@@ -61,6 +60,7 @@ Return ONLY valid JSON array. Be brutally honest — a 50 is average, 80+ is str
 
 const formFillerAgent: SubAgentConfig = {
   name: "form_filler",
+  task: "form_fill",
   systemPrompt: `You are the Form Filler sub-agent. Your job is to map candidate data to application form fields.
 
 Given:
@@ -75,7 +75,6 @@ Produce a field mapping:
 - Flag any required fields that cannot be filled (needs human input)
 
 Return ONLY valid JSON with field mappings and any fields needing human input.`,
-  tools: [],
   maxTokens: 2048,
 };
 
@@ -83,6 +82,7 @@ Return ONLY valid JSON with field mappings and any fields needing human input.`,
 
 const documentManagerAgent: SubAgentConfig = {
   name: "document_manager",
+  task: "document_prep",
   systemPrompt: `You are the Document Manager sub-agent. Your job is to select and prepare documents for job applications.
 
 Given a job description and available documents (resume, cover letters, etc.):
@@ -92,7 +92,6 @@ Given a job description and available documents (resume, cover letters, etc.):
 4. Return a document checklist with status (ready / needs_edit / missing)
 
 Return ONLY valid JSON.`,
-  tools: [],
   maxTokens: 2048,
 };
 
@@ -128,34 +127,29 @@ export async function runSubAgent(
     : "";
 
   try {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: config.maxTokens,
-      system: config.systemPrompt,
-      tools: config.tools.length > 0 ? config.tools : undefined,
-      messages: [
-        { role: "user", content: userMessage + contextStr },
-      ],
-    });
-
-    const text = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as Anthropic.TextBlock).text)
-      .join("\n");
+    const response: CompletionResponse = await complete(
+      {
+        system: config.systemPrompt,
+        userMessage: userMessage + contextStr,
+        maxTokens: config.maxTokens,
+      },
+      config.task
+    );
 
     // Try to parse as JSON
     let data: Record<string, unknown> = {};
     try {
-      data = JSON.parse(text);
+      data = JSON.parse(response.text);
     } catch {
-      data = { raw_response: text };
+      data = { raw_response: response.text };
     }
 
     return {
       agent: agentName,
       status: "success",
       data,
-      message: `${config.name} completed successfully`,
+      message: `${config.name} completed via ${response.provider}/${response.model}`,
+      provider: response.provider,
     };
   } catch (err) {
     return {

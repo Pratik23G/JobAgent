@@ -54,12 +54,27 @@ export async function GET(request: Request) {
     },
   });
 
+  // Validate origin against allowlist (default: localhost + chrome extensions)
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:3000")
+    .split(",")
+    .map((o) => o.trim());
+  const origin = request.headers.get("Origin") || "";
+  const isAllowed =
+    origin.startsWith("chrome-extension://") ||
+    allowedOrigins.includes(origin) ||
+    !origin; // SSE from same origin sends no Origin header
+
+  if (!isAllowed) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
-      "Access-Control-Allow-Origin": "*",
+      ...(origin && isAllowed ? { "Access-Control-Allow-Origin": origin } : {}),
+      Vary: "Origin",
     },
   });
 }

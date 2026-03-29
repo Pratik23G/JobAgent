@@ -2,16 +2,40 @@
 // Updates the application status from "ready" to "applied" in Supabase.
 
 import { getServiceClient } from "@/lib/db";
+import { ExtensionConfirmSchema, validateRequest } from "@/lib/validation";
+import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
-  const { company, jobTitle, jobUrl, sessionId, fieldsFilledCount, resumeUploaded } = await request.json();
+  const rawBody = await request.json();
+  const validated = validateRequest(ExtensionConfirmSchema, rawBody);
+  if (!validated.success) return validated.error;
+
+  const { company, jobTitle, jobUrl, sessionId, fieldsFilledCount, resumeUploaded } = validated.data;
 
   if (!company && !jobTitle) {
     return Response.json({ error: "Need company or jobTitle to match application" }, { status: 400 });
   }
 
+  // Rate limit: 30/min per session
+  const rlKey = sessionId || request.headers.get("x-forwarded-for") || "anonymous";
+  const rl = rateLimit(`confirm:${rlKey}`, 30, 60_000);
+  if (!rl.success) return rateLimitResponse(rl.resetAt);
+
   const supabase = getServiceClient();
   const userId = sessionId ? `anon_${sessionId}` : "";
+
+  // Auth check: validate sessionId exists in agent_sessions
+  if (sessionId) {
+    const { data: sessionExists } = await supabase
+      .from("agent_sessions")
+      .select("id")
+      .eq("session_id", sessionId)
+      .limit(1);
+
+    if (!sessionExists || sessionExists.length === 0) {
+      return Response.json({ error: "Invalid session" }, { status: 401 });
+    }
+  }
 
   // Try to find the matching application
   let query = supabase

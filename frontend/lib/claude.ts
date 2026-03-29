@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicClient } from "./models";
 
-const client = new Anthropic();
+const client = anthropicClient();
 
 export const AGENT_TOOLS: Anthropic.Tool[] = [
   {
@@ -59,21 +60,42 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: "write_cold_email",
     description:
-      "Write a personalized cold email to a recruiter at a target company",
+      "Write a highly personalized cold email to a contact at a target company. Uses scraped context about the recipient, company tech stack, and includes relevant project links. ALWAYS use find_contacts first to get recipient-specific context.",
     input_schema: {
       type: "object" as const,
       properties: {
-        recruiter_name: { type: "string" },
+        recruiter_name: { type: "string", description: "Recipient's full name" },
+        recipient_title: { type: "string", description: "Recipient's job title (e.g., 'Senior Recruiter', 'Engineering Manager')" },
+        recipient_context: { type: "string", description: "Any scraped info about the recipient (their work, posts, background)" },
         company: { type: "string" },
+        company_domain: { type: "string", description: "Company website domain for context scraping (e.g., stripe.com)" },
         role_interest: { type: "string" },
         resume_summary: { type: "string" },
+        relevant_projects: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              url: { type: "string" },
+              description: { type: "string" },
+              tech_stack: { type: "array", items: { type: "string" } },
+            },
+          },
+          description: "User's projects relevant to the company's tech stack",
+        },
+        company_tech_stack: {
+          type: "array",
+          items: { type: "string" },
+          description: "Technologies the company uses (from job description or scraping)",
+        },
       },
       required: ["recruiter_name", "company", "role_interest"],
     },
   },
   {
     name: "send_email",
-    description: "Send an email to a recruiter via Resend",
+    description: "Send an email to a recruiter via Resend. Supports resume attachment and automatic follow-up scheduling.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -81,6 +103,18 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
         to_name: { type: "string" },
         subject: { type: "string" },
         body: { type: "string" },
+        company: { type: "string", description: "Company name (for tracking)" },
+        recipient_title: { type: "string", description: "Recipient's title (for tracking)" },
+        attach_resume: { type: "boolean", description: "Attach user's resume PDF to the email" },
+        project_links: {
+          type: "array",
+          items: { type: "object", properties: { name: { type: "string" }, url: { type: "string" } } },
+          description: "Project links included in the email (for tracking)",
+        },
+        schedule_followup_days: {
+          type: "number",
+          description: "Schedule a follow-up email in N days if no reply (default: 5). Set to 0 to skip.",
+        },
       },
       required: ["to_email", "subject", "body"],
     },
@@ -251,6 +285,51 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
       properties: {},
     },
   },
+  {
+    name: "find_contacts",
+    description:
+      "Find recruiter and engineer contacts at a company for cold outreach. Scrapes company website, uses email finder APIs (Hunter.io), and searches GitHub organizations. Use this BEFORE writing cold emails to get personalized context about recipients.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        company: { type: "string", description: "Company name" },
+        domain: {
+          type: "string",
+          description: "Company website domain (e.g., stripe.com). Will be guessed from company name if not provided.",
+        },
+        roles: {
+          type: "array",
+          items: { type: "string" },
+          description: "Target roles to filter for (e.g., ['recruiter', 'engineer', 'hiring manager']). Returns all contacts if omitted.",
+        },
+      },
+      required: ["company"],
+    },
+  },
+  {
+    name: "review_queue",
+    description:
+      "View and manage the auto-apply application queue. List pending applications, approve or reject them, or approve all high-scoring applications at once. Use when the user asks about queued applications, wants to review auto-applied jobs, or manage the pipeline.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "approve", "reject", "approve_all"],
+          description: "Action to perform on the queue",
+        },
+        queue_id: {
+          type: "string",
+          description: "Specific queue item ID (for approve/reject). Not needed for list/approve_all.",
+        },
+        min_score: {
+          type: "number",
+          description: "For approve_all: only approve items with match_score >= this value (default: 70)",
+        },
+      },
+      required: ["action"],
+    },
+  },
 ];
 
 export function buildSystemPrompt(context: {
@@ -316,6 +395,27 @@ ${context.sessionSummary}`);
 - When the user says "find jobs" or "search jobs", search first, show results, then IMMEDIATELY call generate_apply_pack for the top 3 results automatically. The user wants to apply, not just browse.
 - When generating apply packs, always use generate_apply_pack (for single jobs) or auto_apply_pipeline (for batch). These create the rich apply pack cards the user can interact with.
 
+## Autonomous Pipeline
+The system runs an autonomous pipeline via cron jobs:
+1. **Daily Search** (/api/cron/search): Searches jobs, scores against resume, auto-generates apply packs for matches >= 70 score
+2. **Auto-Apply** (/api/cron/auto-apply): Sends queued applications to the extension for auto-fill (NO auto-submit)
+3. **Follow-Up** (/api/cron/followup): Sends follow-up emails to contacts who haven't replied (max 3 per thread, 5-day intervals)
+
+Applications are queued in the **Application Queue** (review_queue tool or /dashboard/queue).
+- NEVER auto-submit without human approval — forms are filled but the user must approve before submission
+- Daily cap: 20 applications/day, 10 emails/day per user
+
+## Cold Email Strategy
+- ALWAYS use find_contacts before writing cold emails to get recipient-specific context
+- Reference the recipient's actual role and work, not generic company info
+- Include 1-2 relevant project links matching the company's tech stack
+- Attach resume when sending to recruiters (use attach_resume: true in send_email)
+- Schedule follow-ups for 5 days by default (schedule_followup_days: 5)
+- Track open/reply status and adjust follow-up strategy
+- For engineers: be technical, reference specific projects
+- For recruiters: be professional, lead with value prop
+- For executives: be brief, vision-aligned
+
 ## Agent Orchestration
 You are the MOTHER AGENT. You coordinate specialized sub-agents to automate the job application process end-to-end.
 
@@ -327,10 +427,10 @@ Sub-agents available:
 
 Orchestration rules:
 1. When user wants to apply to a specific job, use orchestrate_application — it runs all sub-agents in sequence
-2. ALWAYS pause for human confirmation before final submission (confirm_application)
+2. Applications go into the queue for human review before submission (confirm_application)
 3. Show the user what will be filled and any fields needing manual input
 4. For one-off tasks (e.g., "parse my resume"), use delegate_to_subagent directly
-5. The extension will receive form-fill data via the apply pack — tell the user to click "Auto-Fill" in the extension after confirming`);
+5. The extension will auto-fill forms and the user approves via the queue dashboard`);
 
   return parts.join("\n");
 }
