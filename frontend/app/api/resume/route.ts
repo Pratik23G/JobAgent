@@ -47,11 +47,23 @@ export async function POST(request: Request) {
   "name": "string",
   "email": "string",
   "phone": "string or null",
+  "address": {
+    "street": "string or null",
+    "city": "string or null",
+    "state": "string or null",
+    "zip": "string or null",
+    "country": "string or null"
+  },
+  "linkedin": "string or null",
+  "website": "string or null",
   "skills": ["string"],
-  "experience": [{"title": "string", "company": "string", "duration": "string"}],
-  "education": [{"degree": "string", "school": "string"}],
+  "experience": [{"title": "string", "company": "string", "duration": "string", "start_date": "string or null", "end_date": "string or null", "description": "string or null", "location": "string or null"}],
+  "education": [{"degree": "string", "school": "string", "field_of_study": "string or null", "graduation_year": "string or null", "gpa": "string or null"}],
+  "certifications": ["string"],
+  "work_authorization": "string or null (e.g. US Citizen, Green Card, H1B, etc.)",
   "summary": "one paragraph summary of the candidate"
 }
+Extract ALL information present in the resume. For address, parse the full mailing address into components. For linkedin/website/github, extract the URLs. For experience, include full descriptions and dates. For skills, list every technical and soft skill mentioned.
 Return ONLY the JSON, no markdown, no explanation.`,
           },
         ],

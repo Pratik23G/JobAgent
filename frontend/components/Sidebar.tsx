@@ -7,6 +7,7 @@ import { signOut } from "next-auth/react";
 const navItems = [
   { href: "/dashboard", label: "Overview", icon: "◈" },
   { href: "/dashboard/queue", label: "Auto-Apply Queue", icon: "◇" },
+  { href: "/dashboard/jobs", label: "Job Search", icon: "◎" },
   { href: "/dashboard/applications", label: "Applications", icon: "◉" },
   { href: "/dashboard/emails", label: "Emails", icon: "✉" },
   { href: "/dashboard/agent", label: "Agent", icon: "⬡" },

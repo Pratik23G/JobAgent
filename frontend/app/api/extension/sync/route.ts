@@ -24,11 +24,15 @@ export async function GET() {
       name?: string;
       email?: string;
       phone?: string;
+      address?: { street?: string; city?: string; state?: string; zip?: string; country?: string };
       linkedin?: string;
       website?: string;
       location?: string;
       skills?: string[];
-      experience?: { title?: string; company?: string }[];
+      experience?: { title?: string; company?: string; duration?: string; start_date?: string; end_date?: string; description?: string; location?: string }[];
+      education?: { degree?: string; school?: string; field_of_study?: string; graduation_year?: string; gpa?: string }[];
+      certifications?: string[];
+      work_authorization?: string;
     } | null;
 
     const nameParts = (parsed?.name || "").split(" ");
@@ -42,7 +46,32 @@ export async function GET() {
       skills: parsed?.skills || [],
       linkedin: parsed?.linkedin || "",
       website: parsed?.website || "",
-      location: parsed?.location || "",
+      location: parsed?.location || parsed?.address?.city || "",
+      // Address fields
+      address: parsed?.address?.street || "",
+      city: parsed?.address?.city || "",
+      state: parsed?.address?.state || "",
+      zip: parsed?.address?.zip || "",
+      country: parsed?.address?.country || "",
+      // Education & experience arrays
+      education: (parsed?.education || []).map(e => ({
+        degree: e.degree || "",
+        school: e.school || "",
+        fieldOfStudy: e.field_of_study || "",
+        graduationYear: e.graduation_year || "",
+        gpa: e.gpa || "",
+      })),
+      experience: (parsed?.experience || []).map(e => ({
+        title: e.title || "",
+        company: e.company || "",
+        duration: e.duration || "",
+        startDate: e.start_date || "",
+        endDate: e.end_date || "",
+        description: e.description || "",
+        location: e.location || "",
+      })),
+      certifications: parsed?.certifications || [],
+      workAuthorization: parsed?.work_authorization || "",
     };
 
     const resumeDataUri = resume?.file_url?.startsWith("data:") ? resume.file_url : null;
