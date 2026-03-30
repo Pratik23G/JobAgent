@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { UsageMini } from "@/components/UsageCard";
 
 const navItems = [
   { href: "/dashboard", label: "Overview", icon: "◈" },
@@ -43,6 +44,11 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Mini usage bars */}
+      <Link href="/dashboard" className="border-t border-card-border hover:bg-card-border/20 transition">
+        <UsageMini />
+      </Link>
 
       <div className="border-t border-card-border p-3">
         <button

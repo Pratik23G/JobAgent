@@ -3,6 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useEffect, useState, useCallback } from "react";
 import ResumeUploader from "@/components/ResumeUploader";
+import UsageCard from "@/components/UsageCard";
 
 interface ClassifiedEmail {
   company: string;
@@ -52,6 +53,7 @@ export default function DashboardOverview() {
   const [scanning, setScanning] = useState(false);
   const [scanResults, setScanResults] = useState<ClassifiedEmail[]>([]);
   const [upgrading, setUpgrading] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [usageData, setUsageData] = useState<{
     usage: Record<string, { used: number; limit: number; remaining: number }>;
     tier: string;
@@ -82,6 +84,11 @@ export default function DashboardOverview() {
         .then((r) => r.json())
         .then((data) => { if (data.usage) setUsageData(data); })
         .catch(() => {});
+    }
+    // Check if banner was dismissed in last 24h
+    const dismissedAt = localStorage.getItem("usage_banner_dismissed");
+    if (dismissedAt && Date.now() - Number(dismissedAt) < 24 * 60 * 60 * 1000) {
+      setBannerDismissed(true);
     }
   }, [fetchData]);
 
@@ -177,20 +184,32 @@ export default function DashboardOverview() {
         </p>
       </div>
 
-      {/* Usage Warning Banner */}
-      {usageWarning && (
-        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 flex items-center justify-between">
-          <p className="text-sm text-yellow-200">
-            You&apos;ve used {usageWarning[1].used}/{usageWarning[1].limit} daily{" "}
-            {usageWarning[0].replace(/_/g, " ")}s — upgrade to Pro for higher limits.
+      {/* Dismissible Usage Warning Banner */}
+      {usageWarning && !bannerDismissed && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 flex items-center justify-between">
+          <p className="text-sm text-amber-200">
+            Running low on {usageWarning[0].replace(/_/g, " ")}s ({usageWarning[1].used}/{usageWarning[1].limit} used) — upgrade to Pro for unlimited access.
           </p>
-          <button
-            onClick={handleUpgrade}
-            disabled={upgrading}
-            className="shrink-0 ml-4 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90 disabled:opacity-50"
-          >
-            {upgrading ? "..." : "Upgrade to Pro — $9.99/mo"}
-          </button>
+          <div className="flex items-center gap-2 ml-4 shrink-0">
+            <a
+              href="/upgrade"
+              className="rounded-lg bg-[#00e87a] px-4 py-2 text-xs font-semibold text-black transition hover:bg-[#00e87a]/90"
+            >
+              Upgrade
+            </a>
+            <button
+              onClick={() => {
+                setBannerDismissed(true);
+                localStorage.setItem("usage_banner_dismissed", String(Date.now()));
+              }}
+              className="rounded-lg p-1.5 text-gray-500 transition hover:bg-gray-800 hover:text-gray-300"
+              aria-label="Dismiss"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 
@@ -204,61 +223,8 @@ export default function DashboardOverview() {
         ))}
       </div>
 
-      {/* Daily Usage */}
-      {usageData && (
-        <div className="glass-card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">Daily Usage</h2>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-muted">
-                {usageData.tier === "pro" ? (
-                  <span className="text-accent font-medium">Pro</span>
-                ) : "Free"} tier · Resets at midnight UTC
-              </span>
-              {usageData.tier === "free" && (
-                <button
-                  onClick={handleUpgrade}
-                  disabled={upgrading}
-                  className="rounded-md bg-accent/10 border border-accent/30 px-3 py-1 text-xs font-medium text-accent transition hover:bg-accent/20 disabled:opacity-50"
-                >
-                  Upgrade to Pro
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {[
-              { key: "agent_message", label: "AI Messages" },
-              { key: "job_search", label: "Job Searches" },
-              { key: "cover_letter", label: "Cover Letters" },
-              { key: "email_sent", label: "Emails Sent" },
-              { key: "gmail_scan", label: "Gmail Scans" },
-            ].map(({ key, label }) => {
-              const u = usageData.usage[key] || { used: 0, limit: 0, remaining: 0 };
-              const pct = u.limit > 0 ? (u.used / u.limit) * 100 : 0;
-              return (
-                <div key={key} className="rounded-lg border border-card-border p-3">
-                  <p className="text-xs text-muted mb-1">{label}</p>
-                  <p className="text-sm font-semibold">
-                    <span className={pct >= 100 ? "text-red-400" : pct >= 80 ? "text-yellow-400" : "text-foreground"}>
-                      {u.used}
-                    </span>
-                    <span className="text-muted font-normal"> / {u.limit}</span>
-                  </p>
-                  <div className="mt-1.5 h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${
-                        pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-accent"
-                      }`}
-                      style={{ width: `${Math.min(100, pct)}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Daily Usage — full card with live countdown */}
+      <UsageCard />
 
       {/* Applications table */}
       {applications.length > 0 && (
