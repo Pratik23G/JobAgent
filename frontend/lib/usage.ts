@@ -17,10 +17,16 @@ const FREE_LIMITS: Record<UsageAction, number> = {
   agent_message: 20,
 };
 
-const PRO_MULTIPLIER = 10;
+const PRO_LIMITS: Record<UsageAction, number> = {
+  job_search: 9999,   // unlimited
+  cover_letter: 50,
+  email_sent: 100,
+  gmail_scan: 9999,   // unlimited
+  agent_message: 200,
+};
 
 function getLimit(action: UsageAction, tier: "free" | "pro"): number {
-  return tier === "pro" ? FREE_LIMITS[action] * PRO_MULTIPLIER : FREE_LIMITS[action];
+  return tier === "pro" ? PRO_LIMITS[action] : FREE_LIMITS[action];
 }
 
 // ─── Get user tier ──────────────────────────────────────────────────────────

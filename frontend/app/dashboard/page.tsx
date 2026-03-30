@@ -51,6 +51,7 @@ export default function DashboardOverview() {
   const [gmailAuthUrl, setGmailAuthUrl] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanResults, setScanResults] = useState<ClassifiedEmail[]>([]);
+  const [upgrading, setUpgrading] = useState(false);
   const [usageData, setUsageData] = useState<{
     usage: Record<string, { used: number; limit: number; remaining: number }>;
     tier: string;
@@ -121,6 +122,33 @@ export default function DashboardOverview() {
     }
   };
 
+  const handleUpgrade = async () => {
+    setUpgrading(true);
+    try {
+      const sid = localStorage.getItem("jobagent_session_id") || "";
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sid }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch {
+      // ignore
+    } finally {
+      setUpgrading(false);
+    }
+  };
+
+  // Check if any usage is at 80%+ (for warning banner)
+  const usageWarning = usageData && usageData.tier === "free"
+    ? Object.entries(usageData.usage).find(
+        ([, v]) => v.limit > 0 && v.used / v.limit >= 0.8
+      )
+    : null;
+
   const ready = applications.filter((a) => a.status === "ready").length;
   const applied = applications.filter((a) => a.status === "applied").length;
   const interviews = applications.filter((a) => a.status === "interview").length;
@@ -149,6 +177,23 @@ export default function DashboardOverview() {
         </p>
       </div>
 
+      {/* Usage Warning Banner */}
+      {usageWarning && (
+        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4 flex items-center justify-between">
+          <p className="text-sm text-yellow-200">
+            You&apos;ve used {usageWarning[1].used}/{usageWarning[1].limit} daily{" "}
+            {usageWarning[0].replace(/_/g, " ")}s — upgrade to Pro for higher limits.
+          </p>
+          <button
+            onClick={handleUpgrade}
+            disabled={upgrading}
+            className="shrink-0 ml-4 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90 disabled:opacity-50"
+          >
+            {upgrading ? "..." : "Upgrade to Pro — $9.99/mo"}
+          </button>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {statCards.map((s) => (
@@ -164,9 +209,22 @@ export default function DashboardOverview() {
         <div className="glass-card p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">Daily Usage</h2>
-            <span className="text-xs text-muted">
-              {usageData.tier === "pro" ? "Pro" : "Free"} tier · Resets at midnight UTC
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted">
+                {usageData.tier === "pro" ? (
+                  <span className="text-accent font-medium">Pro</span>
+                ) : "Free"} tier · Resets at midnight UTC
+              </span>
+              {usageData.tier === "free" && (
+                <button
+                  onClick={handleUpgrade}
+                  disabled={upgrading}
+                  className="rounded-md bg-accent/10 border border-accent/30 px-3 py-1 text-xs font-medium text-accent transition hover:bg-accent/20 disabled:opacity-50"
+                >
+                  Upgrade to Pro
+                </button>
+              )}
+            </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {[
