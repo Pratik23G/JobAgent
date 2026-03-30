@@ -47,7 +47,11 @@ export default function EmailsPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const sessionId = typeof window !== "undefined"
-    ? localStorage.getItem("jobagent_session_id") || ""
+    ? localStorage.getItem("jobagent_session_id") || (() => {
+        const id = crypto.randomUUID();
+        localStorage.setItem("jobagent_session_id", id);
+        return id;
+      })()
     : "";
 
   // Check Gmail connection
@@ -222,7 +226,7 @@ export default function EmailsPage() {
               </a>
             ) : (
               <p className="text-xs text-red-400">
-                Gmail OAuth not configured. Check .env.local for GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.
+                Gmail OAuth not configured. Ensure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in environment variables.
               </p>
             )}
           </div>
