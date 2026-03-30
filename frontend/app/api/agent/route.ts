@@ -8,6 +8,7 @@ import { extensionEvents } from "@/lib/events";
 import { complete, CLAUDE_MODEL } from "@/lib/models";
 import { AgentCommandSchema, validateRequest } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { checkAndIncrementUsage, usageLimitResponse } from "@/lib/usage";
 import { scoreJobs } from "@/lib/job-scoring";
 import { searchMultipleSources, type JobResult } from "@/lib/job-search";
 import { loadSessionContext, saveSessionState } from "@/lib/session";
@@ -1384,6 +1385,10 @@ export async function POST(request: Request) {
   if (!userId) {
     userId = `anon_${sid}`;
   }
+
+  // Daily usage cap: agent messages
+  const usage = await checkAndIncrementUsage(userId, "agent_message");
+  if (!usage.allowed) return usageLimitResponse("agent_message", usage.used, usage.limit);
 
   const supabase = getServiceClient();
 

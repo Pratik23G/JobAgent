@@ -46,6 +46,13 @@ export async function GET(request: Request) {
       .lt("created_at", oneYearAgo);
     results.push({ table: "audit_logs", deleted: auditDeleted || 0 });
 
+    // Usage tracking records > 30 days
+    const { count: usageDeleted } = await supabase
+      .from("usage_tracking")
+      .delete({ count: "exact" })
+      .lt("date", thirtyDaysAgo);
+    results.push({ table: "usage_tracking", deleted: usageDeleted || 0 });
+
     const totalDeleted = results.reduce((sum, r) => sum + r.deleted, 0);
 
     await auditLog({

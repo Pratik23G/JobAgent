@@ -4,6 +4,7 @@ import { sendColdEmail } from "@/lib/resend";
 import { getServiceClient } from "@/lib/db";
 import { EmailSendSchema, validateRequest } from "@/lib/validation";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { checkAndIncrementUsage, usageLimitResponse } from "@/lib/usage";
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
@@ -19,6 +20,10 @@ export async function POST(request: Request) {
   // Rate limit: 10 emails/min per user
   const rl = rateLimit(`email:${userId}`, 10, 60_000);
   if (!rl.success) return rateLimitResponse(rl.resetAt);
+
+  // Daily usage cap: emails sent
+  const usage = await checkAndIncrementUsage(userId, "email_sent");
+  if (!usage.allowed) return usageLimitResponse("email_sent", usage.used, usage.limit);
 
   const rawBody = await request.json();
   const validated = validateRequest(EmailSendSchema, rawBody);

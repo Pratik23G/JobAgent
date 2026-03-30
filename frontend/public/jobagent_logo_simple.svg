@@ -1,0 +1,63 @@
+<svg width="100%" viewBox="0 0 680 337.89" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    
+  </defs>
+
+  <!-- ═══ MAIN HORIZONTAL LOGO ═══ -->
+  <rect x="40" y="30" width="600" height="160" rx="20" style="fill:rgb(17, 17, 17);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- Icon: green square with briefcase -->
+  <rect x="68" y="54" width="112" height="112" rx="16" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <!-- Briefcase body on green bg -->
+  <rect x="86" y="96" width="76" height="52" rx="8" style="fill:rgb(10, 10, 10);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <!-- Handle -->
+  <path d="M102 96 L102 84 Q102 76 110 76 L138 76 Q146 76 146 84 L146 96" style="fill:none;stroke:rgb(10, 10, 10);color:rgb(255, 255, 255);stroke-width:5px;stroke-linecap:round;stroke-linejoin:round;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <!-- Center latch (small dark dot) -->
+  <rect x="119" y="116" width="10" height="8" rx="2" fill="#0a0a0a" style="fill:rgb(10, 10, 10);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <circle cx="124" cy="120" r="2.5" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <!-- Mid divider line on briefcase -->
+  <line x1="86" y1="122" x2="162" y2="122" stroke="#1a1a1a" stroke-width="1" style="fill:rgb(0, 0, 0);stroke:rgb(26, 26, 26);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- Wordmark -->
+  <text x="200" y="128" style="fill:rgb(255, 255, 255);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, system-ui, sans-serif;font-size:64px;font-weight:600;text-anchor:start;dominant-baseline:auto">Job</text>
+  <text x="338" y="128" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, system-ui, sans-serif;font-size:64px;font-weight:600;text-anchor:start;dominant-baseline:auto">Agent</text>
+
+  <!-- Tagline -->
+  <text x="201" y="158" style="fill:rgb(68, 68, 68);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, system-ui, sans-serif;font-size:11px;font-weight:500;text-anchor:start;dominant-baseline:auto">AI-POWERED JOB HUNTING</text>
+
+  <!-- ═══ DIVIDER ═══ -->
+  <line x1="40" y1="210" x2="640" y2="210" style="fill:rgb(0, 0, 0);stroke:rgb(34, 34, 34);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- ═══ FAVICON / ICON ONLY VERSION ═══ -->
+  <!-- Label -->
+  <text x="40" y="238" font-family="ui-sans-serif,sans-serif" font-size="11" fill="#333" letter-spacing="1.5" font-weight="500" style="fill:rgb(51, 51, 51);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, sans-serif;font-size:11px;font-weight:500;text-anchor:start;dominant-baseline:auto">ICON MARK (for Google OAuth upload)</text>
+
+  <!-- Large favicon preview -->
+  <rect x="40" y="250" width="64" height="64" rx="12" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <rect x="52" y="278" width="40" height="28" rx="5" style="fill:rgb(10, 10, 10);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <path d="M60 278 L60 270 Q60 265 65 265 L79 265 Q84 265 84 270 L84 278" style="fill:none;stroke:rgb(10, 10, 10);color:rgb(255, 255, 255);stroke-width:3.5px;stroke-linecap:round;stroke-linejoin:round;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="52" y1="292" x2="92" y2="292" stroke="#1a1a1a" stroke-width="0.8" style="fill:rgb(0, 0, 0);stroke:rgb(26, 26, 26);color:rgb(255, 255, 255);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <circle cx="72" cy="291" r="2" fill="#00e87a" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- Medium favicon -->
+  <rect x="120" y="258" width="48" height="48" rx="10" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <rect x="130" y="280" width="28" height="20" rx="4" style="fill:rgb(10, 10, 10);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <path d="M136 280 L136 273 Q136 269 140 269 L150 269 Q154 269 154 273 L154 280" stroke-width="2.8" style="fill:none;stroke:rgb(10, 10, 10);color:rgb(255, 255, 255);stroke-width:3.5px;stroke-linecap:round;stroke-linejoin:round;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <circle cx="144" cy="289" r="1.5" fill="#00e87a" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- Small favicon -->
+  <rect x="184" y="264" width="32" height="32" rx="7" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <rect x="191" y="280" width="18" height="12" rx="3" style="fill:rgb(10, 10, 10);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <path d="M195 280 L195 275 Q195 272 198 272 L202 272 Q205 272 205 275 L205 280" stroke-width="2" style="fill:none;stroke:rgb(10, 10, 10);color:rgb(255, 255, 255);stroke-width:3.5px;stroke-linecap:round;stroke-linejoin:round;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <circle cx="200" cy="285" r="1" fill="#00e87a" style="fill:rgb(0, 232, 122);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- Size labels -->
+  <text x="58" y="326" font-family="ui-sans-serif,sans-serif" font-size="10" fill="#333" text-anchor="middle" style="fill:rgb(51, 51, 51);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, sans-serif;font-size:10px;font-weight:400;text-anchor:middle;dominant-baseline:auto">64px</text>
+  <text x="144" y="326" font-family="ui-sans-serif,sans-serif" font-size="10" fill="#333" text-anchor="middle" style="fill:rgb(51, 51, 51);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, sans-serif;font-size:10px;font-weight:400;text-anchor:middle;dominant-baseline:auto">48px</text>
+  <text x="200" y="326" font-family="ui-sans-serif,sans-serif" font-size="10" fill="#333" text-anchor="middle" style="fill:rgb(51, 51, 51);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, sans-serif;font-size:10px;font-weight:400;text-anchor:middle;dominant-baseline:auto">32px</text>
+
+  <!-- Usage note -->
+  <text x="260" y="270" font-family="ui-sans-serif,sans-serif" font-size="12" fill="#444" style="fill:rgb(68, 68, 68);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto">Upload the 64px or 48px version</text>
+  <text x="260" y="288" font-family="ui-sans-serif,sans-serif" font-size="12" fill="#444" style="fill:rgb(68, 68, 68);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto">to Google OAuth consent screen</text>
+  <text x="260" y="306" font-family="ui-sans-serif,sans-serif" font-size="12" fill="#333" style="fill:rgb(51, 51, 51);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:ui-sans-serif, sans-serif;font-size:12px;font-weight:400;text-anchor:start;dominant-baseline:auto">Google requires: 120×120px PNG</text>
+</svg>

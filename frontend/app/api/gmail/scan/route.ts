@@ -5,6 +5,7 @@
 import { fetchRecentEmails, getGmailTokens, refreshAndSaveToken } from "@/lib/gmail";
 import { getServiceClient } from "@/lib/db";
 import { complete } from "@/lib/models";
+import { checkAndIncrementUsage, usageLimitResponse } from "@/lib/usage";
 
 interface ClassifiedEmail {
   emailId: string;
@@ -105,8 +106,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "Gmail not connected", connected: false }, { status: 401 });
   }
 
-  const supabase = getServiceClient();
   const userId = `anon_${sessionId}`;
+
+  // Daily usage cap: Gmail scans
+  const usage = await checkAndIncrementUsage(userId, "gmail_scan");
+  if (!usage.allowed) return usageLimitResponse("gmail_scan", usage.used, usage.limit);
+
+  const supabase = getServiceClient();
 
   // Get known companies
   const { data: apps } = await supabase

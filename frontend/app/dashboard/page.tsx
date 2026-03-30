@@ -51,6 +51,11 @@ export default function DashboardOverview() {
   const [gmailAuthUrl, setGmailAuthUrl] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanResults, setScanResults] = useState<ClassifiedEmail[]>([]);
+  const [usageData, setUsageData] = useState<{
+    usage: Record<string, { used: number; limit: number; remaining: number }>;
+    tier: string;
+    resetsAt: string;
+  } | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -69,6 +74,14 @@ export default function DashboardOverview() {
 
   useEffect(() => {
     fetchData();
+    // Fetch usage data
+    const sid = localStorage.getItem("jobagent_session_id") || "";
+    if (sid) {
+      fetch(`/api/usage?sessionId=${sid}`)
+        .then((r) => r.json())
+        .then((data) => { if (data.usage) setUsageData(data); })
+        .catch(() => {});
+    }
   }, [fetchData]);
 
   // Check Gmail connection status
@@ -145,6 +158,49 @@ export default function DashboardOverview() {
           </div>
         ))}
       </div>
+
+      {/* Daily Usage */}
+      {usageData && (
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">Daily Usage</h2>
+            <span className="text-xs text-muted">
+              {usageData.tier === "pro" ? "Pro" : "Free"} tier · Resets at midnight UTC
+            </span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {[
+              { key: "agent_message", label: "AI Messages" },
+              { key: "job_search", label: "Job Searches" },
+              { key: "cover_letter", label: "Cover Letters" },
+              { key: "email_sent", label: "Emails Sent" },
+              { key: "gmail_scan", label: "Gmail Scans" },
+            ].map(({ key, label }) => {
+              const u = usageData.usage[key] || { used: 0, limit: 0, remaining: 0 };
+              const pct = u.limit > 0 ? (u.used / u.limit) * 100 : 0;
+              return (
+                <div key={key} className="rounded-lg border border-card-border p-3">
+                  <p className="text-xs text-muted mb-1">{label}</p>
+                  <p className="text-sm font-semibold">
+                    <span className={pct >= 100 ? "text-red-400" : pct >= 80 ? "text-yellow-400" : "text-foreground"}>
+                      {u.used}
+                    </span>
+                    <span className="text-muted font-normal"> / {u.limit}</span>
+                  </p>
+                  <div className="mt-1.5 h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-yellow-500" : "bg-accent"
+                      }`}
+                      style={{ width: `${Math.min(100, pct)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Applications table */}
       {applications.length > 0 && (
