@@ -91,6 +91,13 @@ export default function LandingPage() {
           </div>
         ))}
       </div>
+
+      {/* Footer */}
+      <footer className="mt-16 pb-8 text-center text-xs text-gray-500">
+        <a href="/privacy" className="hover:text-gray-300 transition">Privacy Policy</a>
+        <span className="mx-2">·</span>
+        <a href="/terms" className="hover:text-gray-300 transition">Terms of Service</a>
+      </footer>
     </div>
   );
 }

@@ -17,6 +17,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "JobAgent — AI Job Application Automation",
   description: "Voice-activated AI agent that automates your entire job hunting pipeline",
+  verification: {
+    google: "rWbBZzV93hIMzYe40-7TtEiGp0On4YaS3aIIEUDHPEo",
+  },
 };
 
 export default function RootLayout({
