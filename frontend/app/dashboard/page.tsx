@@ -4,6 +4,7 @@ import { useSession } from "next-auth/react";
 import { useEffect, useState, useCallback } from "react";
 import ResumeUploader from "@/components/ResumeUploader";
 import UsageCard from "@/components/UsageCard";
+import { X as XIcon, TrendingUp } from "lucide-react";
 
 interface ClassifiedEmail {
   company: string;
@@ -193,8 +194,9 @@ export default function DashboardOverview() {
           <div className="flex items-center gap-2 ml-4 shrink-0">
             <a
               href="/upgrade"
-              className="rounded-lg bg-[#00e87a] px-4 py-2 text-xs font-semibold text-black transition hover:bg-[#00e87a]/90"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#00e87a] px-4 py-2 text-xs font-semibold text-black transition hover:bg-[#00e87a]/90"
             >
+              <TrendingUp className="w-3.5 h-3.5" />
               Upgrade
             </a>
             <button
@@ -205,9 +207,7 @@ export default function DashboardOverview() {
               className="rounded-lg p-1.5 text-gray-500 transition hover:bg-gray-800 hover:text-gray-300"
               aria-label="Dismiss"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              <XIcon className="w-4 h-4" />
             </button>
           </div>
         </div>

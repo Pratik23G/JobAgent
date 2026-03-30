@@ -1,6 +1,17 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import {
+  Search,
+  FileText,
+  Mail,
+  Inbox,
+  Bot,
+  Lock,
+  Zap,
+  TrendingUp,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 interface UsageMeter {
   used: number;
@@ -18,16 +29,16 @@ interface UsageData {
   isPro: boolean;
 }
 
-const METERS = [
-  { key: "searches", label: "Job Searches", icon: "🔍", dailyLimit: 10 },
-  { key: "coverLetters", label: "Cover Letters", icon: "📝", dailyLimit: 5 },
-  { key: "emails", label: "Recruiter Emails", icon: "✉️", dailyLimit: 10 },
-  { key: "gmailScans", label: "Gmail Scans", icon: "📬", dailyLimit: 3 },
-  { key: "agentMessages", label: "AI Messages", icon: "🤖", dailyLimit: 20 },
-] as const;
+const METERS: { key: string; label: string; icon: LucideIcon; dailyLimit: number }[] = [
+  { key: "searches", label: "Job Searches", icon: Search, dailyLimit: 10 },
+  { key: "coverLetters", label: "Cover Letters", icon: FileText, dailyLimit: 5 },
+  { key: "emails", label: "Recruiter Emails", icon: Mail, dailyLimit: 10 },
+  { key: "gmailScans", label: "Gmail Scans", icon: Inbox, dailyLimit: 3 },
+  { key: "agentMessages", label: "AI Messages", icon: Bot, dailyLimit: 20 },
+];
 
 function getBarColor(used: number, limit: number | null): string {
-  if (limit === null) return "bg-[#00e87a]"; // Pro unlimited
+  if (limit === null) return "bg-[#00e87a]";
   const remaining = limit - used;
   const pct = remaining / limit;
   if (pct <= 0) return "bg-gray-600";
@@ -62,11 +73,10 @@ export default function UsageCard() {
 
   useEffect(() => {
     fetchUsage();
-    const interval = setInterval(fetchUsage, 5 * 60 * 1000); // refresh every 5 min
+    const interval = setInterval(fetchUsage, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [fetchUsage]);
 
-  // Live countdown
   useEffect(() => {
     if (!data?.resetsAt) return;
     const tick = () => setCountdown(getTimeUntilReset(data.resetsAt));
@@ -83,7 +93,8 @@ export default function UsageCard() {
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">Daily Usage</h2>
           {data.isPro && (
-            <span className="rounded-full bg-[#00e87a]/10 border border-[#00e87a]/30 px-2.5 py-0.5 text-xs font-semibold text-[#00e87a]">
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#00e87a]/10 border border-[#00e87a]/30 px-2.5 py-0.5 text-xs font-semibold text-[#00e87a]">
+              <Zap className="w-3 h-3 fill-[#00e87a]" />
               Pro
             </span>
           )}
@@ -92,7 +103,7 @@ export default function UsageCard() {
       </div>
 
       <div className="space-y-4">
-        {METERS.map(({ key, label, icon, dailyLimit }) => {
+        {METERS.map(({ key, label, icon: Icon, dailyLimit }) => {
           const meter = data[key as keyof UsageData] as UsageMeter;
           const limit = meter.limit;
           const used = meter.used;
@@ -104,17 +115,19 @@ export default function UsageCard() {
             <div key={key}>
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm">{icon}</span>
-                  <span className="text-sm text-gray-300">{label}</span>
+                  {isExhausted ? (
+                    <Lock className="w-4 h-4 text-gray-500" />
+                  ) : (
+                    <Icon className="w-4 h-4 text-[#00e87a]" />
+                  )}
+                  <span className={`text-sm ${isExhausted ? "text-gray-500" : "text-gray-300"}`}>{label}</span>
                 </div>
                 <span className="text-xs font-medium">
                   {isUnlimited ? (
                     <span className="text-[#00e87a]">Unlimited</span>
                   ) : isExhausted ? (
                     <span className="text-gray-500 flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-                      </svg>
+                      <Lock className="w-3 h-3" />
                       {used}/{limit} used
                     </span>
                   ) : (
@@ -141,13 +154,13 @@ export default function UsageCard() {
         })}
       </div>
 
-      {/* Upgrade CTA for free users */}
       {!data.isPro && (
         <div className="mt-5 pt-4 border-t border-gray-800">
           <a
             href="/upgrade"
             className="flex items-center justify-center gap-2 w-full rounded-lg bg-[#00e87a]/10 border border-[#00e87a]/30 py-2.5 text-sm font-medium text-[#00e87a] transition hover:bg-[#00e87a]/20"
           >
+            <TrendingUp className="w-4 h-4" />
             Upgrade to Pro for higher limits
           </a>
         </div>
@@ -170,7 +183,6 @@ export function UsageMini() {
       .then((json) => {
         if (json.searches) {
           setData(json);
-          // Check if any meter is critical (<20% remaining)
           const critical = METERS.some(({ key, dailyLimit }) => {
             const m = json[key] as UsageMeter;
             if (m.limit === null) return false;
@@ -185,14 +197,14 @@ export function UsageMini() {
   if (!data) return null;
 
   return (
-    <div className="px-3 py-2 space-y-1.5">
+    <div className="px-3 py-2 space-y-1.5 relative">
       <div className="flex items-center gap-2 mb-1">
         <span className="text-xs text-gray-500 font-medium">Usage</span>
         {hasCritical && (
           <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
         )}
       </div>
-      {METERS.map(({ key, icon, dailyLimit }) => {
+      {METERS.map(({ key, icon: Icon, dailyLimit }) => {
         const meter = data[key as keyof UsageData] as UsageMeter;
         const limit = meter.limit;
         const used = meter.used;
@@ -201,7 +213,7 @@ export function UsageMini() {
 
         return (
           <div key={key} className="flex items-center gap-2">
-            <span className="text-[10px]">{icon}</span>
+            <Icon className="w-3 h-3 text-gray-500 shrink-0" />
             <div className="flex-1 h-[3px] rounded-full bg-gray-800 overflow-hidden">
               {isUnlimited ? (
                 <div className="h-full w-full bg-[#00e87a]/20 rounded-full" />
