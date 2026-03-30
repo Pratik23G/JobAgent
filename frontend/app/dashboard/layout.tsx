@@ -1,4 +1,5 @@
 import Sidebar from "@/components/Sidebar";
+import MobileNav from "@/components/MobileNav";
 
 export default function DashboardLayout({
   children,
@@ -6,10 +7,19 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar />
-      {/* pt-14 on mobile for fixed top bar, p-4 mobile / p-8 desktop */}
-      <main className="flex-1 overflow-y-auto p-4 pt-18 md:p-8 md:pt-8">
+    <div className="relative h-screen overflow-hidden md:flex">
+      {/* Desktop sidebar — hidden below md via wrapper */}
+      <div className="hidden md:block">
+        <Sidebar />
+      </div>
+
+      {/* Mobile hamburger + drawer — hidden at md via CSS inside component */}
+      <div className="block md:hidden">
+        <MobileNav />
+      </div>
+
+      {/* Main content — pt-14 on mobile for top bar, p-4 mobile / p-8 desktop */}
+      <main className="h-screen flex-1 overflow-y-auto p-4 pt-18 md:p-8 md:pt-8">
         {children}
       </main>
     </div>
