@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { Mic, Square, Loader2 } from "lucide-react";
 import ApplyPackCard from "./ApplyPackCard";
 
 interface ApplyPack {
@@ -591,9 +592,11 @@ export default function VoiceAgent() {
             </>
           )}
           {isThinking ? (
-            <span className="animate-spin text-2xl">&#9881;</span>
+            <Loader2 className="w-8 h-8 animate-spin" />
+          ) : isListening ? (
+            <Square className="w-7 h-7 fill-current" />
           ) : (
-            <span>{isListening ? "&#9632;" : "&#127908;"}</span>
+            <Mic className="w-8 h-8" />
           )}
         </button>
 
