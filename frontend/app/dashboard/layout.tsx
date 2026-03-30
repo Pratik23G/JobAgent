@@ -8,8 +8,8 @@ export default function DashboardLayout({
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
-      {/* pb-20 on mobile for bottom nav clearance, p-4 on mobile, p-8 on desktop */}
-      <main className="flex-1 overflow-y-auto p-4 pb-20 md:p-8 md:pb-8">
+      {/* pt-14 on mobile for fixed top bar, p-4 mobile / p-8 desktop */}
+      <main className="flex-1 overflow-y-auto p-4 pt-18 md:p-8 md:pt-8">
         {children}
       </main>
     </div>

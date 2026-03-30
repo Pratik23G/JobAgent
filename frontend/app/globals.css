@@ -71,25 +71,6 @@ body {
   animation: blink 0.8s step-end infinite;
 }
 
-/* Mobile drawer slide-in */
-@keyframes slide-in-right {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-
-.animate-slide-in {
-  animation: slide-in-right 0.2s ease-out;
-}
-
-/* Safe area for bottom nav on notched phones */
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
 /* Hide scrollbar for horizontal-scroll tabs */
 .scrollbar-hide {
   -ms-overflow-style: none;
