@@ -2,15 +2,25 @@
 
 import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 export default function LandingPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const [showBrowserWarning, setShowBrowserWarning] = useState(false);
 
   useEffect(() => {
     if (session) router.push("/dashboard");
   }, [session, router]);
+
+  useEffect(() => {
+    const ua = navigator.userAgent;
+    const isInAppBrowser =
+      /LinkedIn|FBAN|FBAV|Instagram|Twitter|Line\/|KAKAOTALK/i.test(ua);
+    if (isInAppBrowser) {
+      setShowBrowserWarning(true);
+    }
+  }, []);
 
   if (status === "loading") {
     return (
@@ -22,6 +32,13 @@ export default function LandingPage() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4 sm:px-6">
+      {showBrowserWarning && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-amber-500 text-black px-4 py-3 text-sm text-center font-medium">
+          For sign-in to work, tap ··· (menu) and select
+          <strong> &ldquo;Open in browser&rdquo;</strong> or{" "}
+          <strong>&ldquo;Open in Safari/Chrome&rdquo;</strong>
+        </div>
+      )}
       {/* Hero */}
       <div className="max-w-2xl text-center">
         <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-card-border bg-card px-4 py-1.5 text-sm text-muted">
