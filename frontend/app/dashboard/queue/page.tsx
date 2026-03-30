@@ -102,7 +102,7 @@ export default function QueueDashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Application Queue</h1>
           <p className="text-sm text-neutral-400 mt-1">
@@ -114,7 +114,7 @@ export default function QueueDashboard() {
             <button
               onClick={() => handleBatchAction("approve_all")}
               disabled={actionLoading === "batch"}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+              className="w-full sm:w-auto px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 min-h-[44px]"
             >
               Approve All ({pendingReviewCount})
             </button>
@@ -123,7 +123,7 @@ export default function QueueDashboard() {
       </div>
 
       {/* Filter tabs */}
-      <div className="flex gap-2 border-b border-neutral-800 pb-2">
+      <div className="flex gap-2 border-b border-neutral-800 pb-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-hide">
         {[
           { key: "all", label: "All" },
           { key: "pending_review", label: `Ready (${pendingReviewCount})` },
@@ -136,7 +136,7 @@ export default function QueueDashboard() {
           <button
             key={tab.key}
             onClick={() => setFilter(tab.key)}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            className={`shrink-0 px-3 py-1.5 rounded-md text-sm font-medium transition-colors min-h-[36px] ${
               filter === tab.key
                 ? "bg-indigo-500/20 text-indigo-400"
                 : "text-neutral-400 hover:text-neutral-200"
@@ -162,19 +162,19 @@ export default function QueueDashboard() {
           {items.map(item => (
             <div
               key={item.id}
-              className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 hover:border-neutral-700 transition-colors"
+              className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 sm:p-5 hover:border-neutral-700 transition-colors"
             >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-1">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start gap-2 flex-wrap mb-1">
                     <h3 className="text-white font-semibold">{item.job_title}</h3>
-                    <span className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_CONFIG[item.status]?.color || "text-neutral-400"}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${STATUS_CONFIG[item.status]?.color || "text-neutral-400"}`}>
                       {STATUS_CONFIG[item.status]?.label || item.status}
                     </span>
                   </div>
                   <p className="text-neutral-400 text-sm">{item.company}</p>
 
-                  <div className="flex items-center gap-4 mt-3 text-xs text-neutral-500">
+                  <div className="flex items-center gap-3 sm:gap-4 mt-3 text-xs text-neutral-500 flex-wrap">
                     <span className="flex items-center gap-1">
                       Score: <span className={`font-medium ${item.match_score >= 80 ? "text-green-400" : item.match_score >= 60 ? "text-yellow-400" : "text-red-400"}`}>{item.match_score}</span>
                     </span>
@@ -205,13 +205,13 @@ export default function QueueDashboard() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex gap-2 ml-4">
+                <div className="flex gap-2 flex-wrap sm:flex-nowrap">
                   {item.job_url && (
                     <a
                       href={item.job_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg"
+                      className="px-3 py-2 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg min-h-[44px] flex items-center justify-center"
                     >
                       Review
                     </a>
@@ -222,14 +222,14 @@ export default function QueueDashboard() {
                       <button
                         onClick={() => handleAction(item.id, "approve")}
                         disabled={actionLoading === item.id}
-                        className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg disabled:opacity-50"
+                        className="px-3 py-2 text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg disabled:opacity-50 min-h-[44px]"
                       >
                         {actionLoading === item.id ? "..." : "Approve"}
                       </button>
                       <button
                         onClick={() => handleAction(item.id, "reject")}
                         disabled={actionLoading === item.id}
-                        className="px-3 py-1.5 text-xs bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg disabled:opacity-50"
+                        className="px-3 py-2 text-xs bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg disabled:opacity-50 min-h-[44px]"
                       >
                         Reject
                       </button>
@@ -240,7 +240,7 @@ export default function QueueDashboard() {
                     <button
                       onClick={() => handleAction(item.id, "retry")}
                       disabled={actionLoading === item.id}
-                      className="px-3 py-1.5 text-xs bg-yellow-600/20 hover:bg-yellow-600/30 text-yellow-400 rounded-lg disabled:opacity-50"
+                      className="px-3 py-2 text-xs bg-yellow-600/20 hover:bg-yellow-600/30 text-yellow-400 rounded-lg disabled:opacity-50 min-h-[44px]"
                     >
                       Retry
                     </button>

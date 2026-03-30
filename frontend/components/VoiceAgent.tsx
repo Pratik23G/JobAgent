@@ -612,19 +612,19 @@ export default function VoiceAgent() {
       </div>
 
       {/* Text Input (fallback / alternative) */}
-      <form onSubmit={handleTextSubmit} className="flex gap-2">
+      <form onSubmit={handleTextSubmit} className="flex flex-col sm:flex-row gap-2">
         <input
           type="text"
           value={textInput}
           onChange={(e) => setTextInput(e.target.value)}
           placeholder="Type a command... e.g. 'Find me React jobs in NYC'"
-          className="flex-1 rounded-lg border border-card-border bg-card px-4 py-2.5 text-sm text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
+          className="flex-1 rounded-lg border border-card-border bg-card px-4 py-2.5 text-sm text-foreground placeholder:text-muted focus:border-accent focus:outline-none min-h-[44px]"
           disabled={isThinking}
         />
         <button
           type="submit"
           disabled={isThinking || !textInput.trim()}
-          className="rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-background transition hover:bg-accent/90 disabled:opacity-50"
+          className="w-full sm:w-auto rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-background transition hover:bg-accent/90 disabled:opacity-50 min-h-[44px]"
         >
           Send
         </button>
@@ -750,18 +750,18 @@ export default function VoiceAgent() {
 
       {/* Action buttons after job search results (when no apply packs yet) */}
       {agentResponse && !isThinking && applyPacks.length === 0 && /\b(jobs?|positions?|roles?|openings?)\b/i.test(agentResponse) && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <button
             onClick={() => sendCommand("Generate apply packs for the top 3 jobs you just showed me")}
             disabled={isThinking}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background transition hover:bg-accent/90 disabled:opacity-50"
+            className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-background transition hover:bg-accent/90 disabled:opacity-50 min-h-[44px]"
           >
             Generate Apply Packs for Top 3
           </button>
           <button
             onClick={() => sendCommand("Auto-apply to all the matching jobs you found")}
             disabled={isThinking}
-            className="rounded-lg border border-accent px-4 py-2 text-sm font-medium text-accent transition hover:bg-accent/10 disabled:opacity-50"
+            className="rounded-lg border border-accent px-4 py-2.5 text-sm font-medium text-accent transition hover:bg-accent/10 disabled:opacity-50 min-h-[44px]"
           >
             Auto-Apply to All Matches
           </button>
@@ -787,13 +787,13 @@ export default function VoiceAgent() {
         <p className="mb-2 text-xs font-medium text-muted uppercase tracking-wider">
           Quick Commands
         </p>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
           {quickCommands.map((cmd) => (
             <button
               key={cmd}
               onClick={() => sendCommand(cmd)}
               disabled={isThinking}
-              className="rounded-full border border-card-border px-3 py-1.5 text-xs text-muted transition hover:border-accent hover:text-accent disabled:opacity-50"
+              className="rounded-full border border-card-border px-3 py-2 text-xs text-muted transition hover:border-accent hover:text-accent disabled:opacity-50 min-h-[44px] sm:min-h-0 sm:py-1.5"
             >
               {cmd}
             </button>

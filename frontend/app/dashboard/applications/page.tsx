@@ -99,12 +99,12 @@ export default function ApplicationsPage() {
       <h1 className="text-2xl font-bold">Applications</h1>
 
       {/* Filter tabs */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-hide">
         {filters.map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
+            className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium capitalize transition min-h-[36px] ${
               filter === f
                 ? "bg-accent text-background"
                 : "border border-card-border text-muted hover:text-foreground"
@@ -139,7 +139,7 @@ export default function ApplicationsPage() {
               >
                 {/* Main row */}
                 <div
-                  className="flex items-center gap-4 px-4 py-3 hover:bg-card/50 cursor-pointer"
+                  className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 px-4 py-3 hover:bg-card/50 cursor-pointer"
                   onClick={() => setExpandedId(isExpanded ? null : app.id)}
                 >
                   <div className="min-w-0 flex-1">
@@ -147,71 +147,75 @@ export default function ApplicationsPage() {
                     <p className="text-xs text-muted truncate">{app.job_title}</p>
                   </div>
 
-                  <span
-                    className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusColors[app.status] ?? statusColors.applied}`}
-                  >
-                    {app.status}
-                  </span>
-
-                  <span className="shrink-0 text-xs text-muted w-20">
-                    {new Date(app.applied_at).toLocaleDateString()}
-                  </span>
-
-                  <select
-                    className="shrink-0 rounded border border-card-border bg-background px-2 py-1 text-xs text-foreground"
-                    value={app.status}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => updateStatus(app.id, e.target.value)}
-                  >
-                    {["ready", "applied", "interview", "offer", "rejected", "ghosted"].map(
-                      (s) => (
-                        <option key={s} value={s}>{s}</option>
-                      )
-                    )}
-                  </select>
-
-                  {app.job_url ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <a
-                        href={app.job_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-background hover:bg-accent/90 transition"
-                      >
-                        Apply
-                      </a>
-                      {/* Link status indicator */}
-                      {linkStatus === "dead" && (
-                        <span className="rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-xs text-red-400" title="This link may be expired">
-                          expired
-                        </span>
-                      )}
-                      {linkStatus === "checking" && (
-                        <span className="text-xs text-muted animate-pulse">...</span>
-                      )}
-                      {!linkStatus && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            checkLink(app.id, app.job_url!);
-                          }}
-                          className="text-xs text-muted hover:text-accent"
-                          title="Check if link is still active"
-                        >
-                          check
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="shrink-0 rounded-full bg-gray-500/10 border border-gray-500/30 px-2 py-0.5 text-xs text-gray-400">
-                      no link
+                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                    <span
+                      className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusColors[app.status] ?? statusColors.applied}`}
+                    >
+                      {app.status}
                     </span>
-                  )}
 
-                  <span className="shrink-0 text-muted text-xs">
-                    {isExpanded ? "▾" : "▸"}
-                  </span>
+                    <span className="shrink-0 text-xs text-muted">
+                      {new Date(app.applied_at).toLocaleDateString()}
+                    </span>
+
+                    <select
+                      className="shrink-0 rounded border border-card-border bg-background px-2 py-1.5 text-xs text-foreground min-h-[36px]"
+                      value={app.status}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => updateStatus(app.id, e.target.value)}
+                    >
+                      {["ready", "applied", "interview", "offer", "rejected", "ghosted"].map(
+                        (s) => (
+                          <option key={s} value={s}>{s}</option>
+                        )
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2 sm:gap-1.5">
+                    {app.job_url ? (
+                      <>
+                        <a
+                          href={app.job_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-background hover:bg-accent/90 transition flex-1 sm:flex-none text-center min-h-[44px] sm:min-h-0 flex items-center justify-center"
+                        >
+                          Apply
+                        </a>
+                        {/* Link status indicator */}
+                        {linkStatus === "dead" && (
+                          <span className="rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-xs text-red-400" title="This link may be expired">
+                            expired
+                          </span>
+                        )}
+                        {linkStatus === "checking" && (
+                          <span className="text-xs text-muted animate-pulse">...</span>
+                        )}
+                        {!linkStatus && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              checkLink(app.id, app.job_url!);
+                            }}
+                            className="text-xs text-muted hover:text-accent min-h-[44px] sm:min-h-0"
+                            title="Check if link is still active"
+                          >
+                            check
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <span className="shrink-0 rounded-full bg-gray-500/10 border border-gray-500/30 px-2 py-0.5 text-xs text-gray-400">
+                        no link
+                      </span>
+                    )}
+
+                    <span className="shrink-0 text-muted text-xs ml-auto sm:ml-0">
+                      {isExpanded ? "▾" : "▸"}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Expanded detail */}

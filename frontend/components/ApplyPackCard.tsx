@@ -89,41 +89,43 @@ export default function ApplyPackCard({ pack }: { pack: ApplyPack }) {
   };
 
   return (
-    <div className="rounded-lg border border-card-border bg-card p-4 space-y-3">
+    <div className="rounded-lg border border-card-border bg-card p-3 sm:p-4 space-y-3">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="font-semibold text-sm text-foreground truncate">
+          <h3 className="font-semibold text-sm text-foreground">
             {pack.title}
           </h3>
           <p className="text-xs text-muted">{pack.company}</p>
-          {pack.score != null && (
-            <span className={`inline-block mt-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-              pack.score >= 80 ? "bg-green-500/10 text-green-400" :
-              pack.score >= 60 ? "bg-yellow-500/10 text-yellow-400" :
-              "bg-red-500/10 text-red-400"
-            }`}>
-              {pack.score}% match
-            </span>
-          )}
-          {pack.source && (
-            <span className="inline-block ml-2 mt-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">
-              {pack.source}
-            </span>
-          )}
+          <div className="flex items-center gap-2 flex-wrap mt-1">
+            {pack.score != null && (
+              <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                pack.score >= 80 ? "bg-green-500/10 text-green-400" :
+                pack.score >= 60 ? "bg-yellow-500/10 text-yellow-400" :
+                "bg-red-500/10 text-red-400"
+              }`}>
+                {pack.score}% match
+              </span>
+            )}
+            {pack.source && (
+              <span className="inline-block rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">
+                {pack.source}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex flex-col gap-2 shrink-0">
+        <div className="flex sm:flex-col gap-2 shrink-0">
           <a
             href={pack.apply_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90 text-center"
+            className="flex-1 sm:flex-none rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90 text-center min-h-[44px] flex items-center justify-center"
           >
             Apply Now
           </a>
           <button
             onClick={sendToExtension}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+            className={`flex-1 sm:flex-none rounded-lg border px-3 py-1.5 text-xs font-medium transition min-h-[44px] sm:min-h-0 ${
               sentToExt
                 ? "border-green-500/30 text-green-400 bg-green-500/10"
                 : "border-card-border text-muted hover:border-accent hover:text-accent"

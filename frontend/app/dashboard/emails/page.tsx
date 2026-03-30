@@ -166,7 +166,7 @@ export default function EmailsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
         <h1 className="text-2xl font-bold">Emails</h1>
         {lastScanned && (
           <span className="text-xs text-muted">
@@ -176,33 +176,33 @@ export default function EmailsPage() {
       </div>
 
       {/* Gmail Connection Card */}
-      <div className="glass-card p-6">
+      <div className="glass-card p-4 sm:p-6">
         <h2 className="text-lg font-semibold mb-3">Gmail Integration</h2>
 
         {loading ? (
           <p className="text-sm text-muted animate-pulse">Checking connection...</p>
         ) : gmailConnected ? (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-400" />
+                <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-400 shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-foreground">Connected</p>
-                  <p className="text-xs text-muted">{gmailEmail}</p>
+                  <p className="text-xs text-muted break-all">{gmailEmail}</p>
                 </div>
               </div>
               <div className="flex gap-2">
                 <button
                   onClick={scanInbox}
                   disabled={scanning}
-                  className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90 disabled:opacity-50"
+                  className="flex-1 sm:flex-none rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-background transition hover:bg-accent/90 disabled:opacity-50 min-h-[44px]"
                 >
                   {scanning ? "Scanning..." : "Scan Now"}
                 </button>
                 <button
                   onClick={disconnectGmail}
                   disabled={disconnecting}
-                  className="rounded-lg border border-red-500/30 px-4 py-2 text-xs font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+                  className="flex-1 sm:flex-none rounded-lg border border-red-500/30 px-4 py-2 text-xs font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50 min-h-[44px]"
                 >
                   {disconnecting ? "..." : "Disconnect"}
                 </button>
@@ -241,8 +241,8 @@ export default function EmailsPage() {
           </h2>
           <div className="space-y-3">
             {scanResults.map((email, i) => (
-              <div key={`${email.fromEmail}-${email.subject}-${i}`} className="rounded-lg border border-card-border p-4 space-y-2">
-                <div className="flex items-start justify-between gap-3">
+              <div key={`${email.fromEmail}-${email.subject}-${i}`} className="rounded-lg border border-card-border p-3 sm:p-4 space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium text-foreground">

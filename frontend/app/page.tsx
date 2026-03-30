@@ -21,7 +21,7 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center px-6">
+    <div className="flex min-h-screen flex-col items-center justify-center px-4 sm:px-6">
       {/* Hero */}
       <div className="max-w-2xl text-center">
         <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-card-border bg-card px-4 py-1.5 text-sm text-muted">
@@ -29,7 +29,7 @@ export default function LandingPage() {
           AI-Powered Job Hunting
         </div>
 
-        <h1 className="mb-4 text-5xl font-bold tracking-tight md:text-6xl">
+        <h1 className="mb-4 text-4xl font-bold tracking-tight sm:text-5xl md:text-6xl">
           <span className="text-accent">JobAgent</span>
         </h1>
 
@@ -41,7 +41,7 @@ export default function LandingPage() {
 
         <button
           onClick={() => signIn("google")}
-          className="inline-flex items-center gap-3 rounded-lg bg-accent px-8 py-3 text-base font-semibold text-background transition hover:bg-accent-dim"
+          className="inline-flex w-full sm:w-auto items-center justify-center gap-3 rounded-lg bg-accent px-8 py-3 text-base font-semibold text-background transition hover:bg-accent-dim min-h-[44px]"
         >
           <svg className="h-5 w-5" viewBox="0 0 24 24">
             <path
@@ -66,7 +66,7 @@ export default function LandingPage() {
       </div>
 
       {/* Feature cards */}
-      <div className="mt-20 grid max-w-4xl gap-4 md:grid-cols-3">
+      <div className="mt-12 sm:mt-20 grid max-w-4xl gap-4 grid-cols-1 md:grid-cols-3">
         {[
           {
             icon: "🎙️",
@@ -93,7 +93,7 @@ export default function LandingPage() {
       </div>
 
       {/* Footer */}
-      <footer className="mt-20 w-full max-w-4xl border-t border-gray-800 pt-6 pb-8 text-center text-xs text-gray-500">
+      <footer className="mt-12 sm:mt-20 w-full max-w-4xl border-t border-gray-800 pt-6 pb-8 text-center text-xs text-gray-500">
         <a href="/privacy" className="hover:text-gray-300 transition">Privacy Policy</a>
         <span className="mx-2 text-gray-700">·</span>
         <a href="/terms" className="hover:text-gray-300 transition">Terms of Service</a>

@@ -167,15 +167,15 @@ export default function JobSearchPage() {
       </div>
 
       {/* Search Bar */}
-      <div className="glass-card p-5">
-        <div className="flex gap-3">
+      <div className="glass-card p-4 sm:p-5">
+        <div className="flex flex-col sm:flex-row gap-3">
           <input
             type="text"
             placeholder="Job title (e.g. Software Engineer, Data Scientist)"
             value={searchTitle}
             onChange={(e) => setSearchTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && searchJobs()}
-            className="flex-1 rounded-lg border border-card-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
+            className="flex-1 rounded-lg border border-card-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted focus:border-accent focus:outline-none min-h-[44px]"
           />
           <input
             type="text"
@@ -183,12 +183,12 @@ export default function JobSearchPage() {
             value={searchLocation}
             onChange={(e) => setSearchLocation(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && searchJobs()}
-            className="w-40 rounded-lg border border-card-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
+            className="w-full sm:w-40 rounded-lg border border-card-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted focus:border-accent focus:outline-none min-h-[44px]"
           />
           <button
             onClick={searchJobs}
             disabled={loading || !searchTitle.trim()}
-            className="rounded-lg bg-accent px-6 py-2.5 text-sm font-semibold text-background transition hover:bg-accent/90 disabled:opacity-50"
+            className="w-full sm:w-auto rounded-lg bg-accent px-6 py-2.5 text-sm font-semibold text-background transition hover:bg-accent/90 disabled:opacity-50 min-h-[44px]"
           >
             {loading ? "Searching..." : "Search"}
           </button>
@@ -241,11 +241,11 @@ export default function JobSearchPage() {
 
       {/* Action Bar */}
       {jobs.length > 0 && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             <button
               onClick={selectAll}
-              className="text-xs text-accent hover:underline"
+              className="text-xs text-accent hover:underline min-h-[44px] sm:min-h-0"
             >
               {selected.size === selectableCount && selectableCount > 0
                 ? "Deselect All"
@@ -261,7 +261,7 @@ export default function JobSearchPage() {
           <button
             onClick={autoApplySelected}
             disabled={selected.size === 0 || applying}
-            className="rounded-lg bg-accent px-5 py-2 text-sm font-semibold text-background transition hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full sm:w-auto rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-background transition hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px]"
           >
             {applying
               ? "Generating Apply Packs..."
@@ -285,8 +285,8 @@ export default function JobSearchPage() {
           </p>
         </div>
       ) : jobs.length > 0 ? (
-        <div className="glass-card overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="glass-card overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm min-w-[700px]">
             <thead>
               <tr className="border-b border-card-border text-left text-xs text-muted uppercase tracking-wider">
                 <th className="p-3 w-10">

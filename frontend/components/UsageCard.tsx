@@ -88,10 +88,10 @@ export default function UsageCard() {
   if (!data) return null;
 
   return (
-    <div className="glass-card p-6">
-      <div className="flex items-center justify-between mb-5">
+    <div className="glass-card p-4 sm:p-6">
+      <div className="flex items-center justify-between mb-4 sm:mb-5">
         <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">Daily Usage</h2>
+          <h2 className="text-base sm:text-lg font-semibold">Daily Usage</h2>
           {data.isPro && (
             <span className="inline-flex items-center gap-1 rounded-full bg-[#00e87a]/10 border border-[#00e87a]/30 px-2.5 py-0.5 text-xs font-semibold text-[#00e87a]">
               <Zap className="w-3 h-3 fill-[#00e87a]" />
@@ -113,7 +113,7 @@ export default function UsageCard() {
 
           return (
             <div key={key}>
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-1.5 gap-0.5 sm:gap-0">
                 <div className="flex items-center gap-2">
                   {isExhausted ? (
                     <Lock className="w-4 h-4 text-gray-500" />
@@ -122,7 +122,7 @@ export default function UsageCard() {
                   )}
                   <span className={`text-sm ${isExhausted ? "text-gray-500" : "text-gray-300"}`}>{label}</span>
                 </div>
-                <span className="text-xs font-medium">
+                <span className="text-xs font-medium ml-6 sm:ml-0">
                   {isUnlimited ? (
                     <span className="text-[#00e87a]">Unlimited</span>
                   ) : isExhausted ? (
