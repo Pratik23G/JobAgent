@@ -1,7 +1,7 @@
 // background.js — Service worker for JobAgent extension
 // Handles: SSE real-time stream, auto-sync fallback, tab monitoring, auto-apply pipeline
 
-const DEFAULT_URL = "http://localhost:3000";
+const DEFAULT_URL = "https://job-agent-umber.vercel.app";
 
 // ─── Auto-Apply Queue ────────────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ async function processAutoApplyQueue() {
     const jobResult = { company: job.company, title: job.title, url: job.url, status: "pending", fieldsFilledCount: 0, resumeUploaded: false, submitted: false, error: null };
 
     try {
-      console.log(`[JobAgent] Auto-apply: navigating to ${job.company} - ${job.title}`);
+      // navigating to job page
 
       // Step 1: Open the job URL in a new tab
       const tab = await chrome.tabs.create({ url: job.url, active: false });
@@ -52,7 +52,7 @@ async function processAutoApplyQueue() {
         }
       } else if (applyResult.isFormPage) {
         // Already on a form page, proceed directly
-        console.log(`[JobAgent] Already on form page for ${job.company}`);
+        // already on form page
       } else {
         // No apply button and not a form page — skip
         jobResult.status = "no_apply_button";
@@ -124,7 +124,7 @@ async function processAutoApplyQueue() {
         }
       }
     } catch (err) {
-      console.error(`[JobAgent] Auto-apply error for ${job.company}:`, err);
+      // auto-apply error
       jobResult.status = "error";
       jobResult.error = err.message || String(err);
     }
@@ -223,7 +223,7 @@ async function injectAndFillForm(tabId, pack, profile) {
     });
     return result || { filledCount: 0, resumeUploaded: false };
   } catch (err) {
-    console.warn("[JobAgent] Fill form failed:", err);
+    // fill form failed
     return { filledCount: 0, resumeUploaded: false };
   }
 }
@@ -295,7 +295,7 @@ async function reportAutoApplyResult(job, pack, result) {
       }),
     });
   } catch (err) {
-    console.warn("[JobAgent] Failed to report auto-apply result:", err);
+    // report failed
   }
 }
 
@@ -309,7 +309,7 @@ async function connectSSE() {
   const sessionId = await getSessionId();
 
   if (!sessionId) {
-    console.log("[JobAgent] No sessionId — skipping SSE, using polling only");
+    // no sessionId — polling only
     return;
   }
 
@@ -329,7 +329,7 @@ async function connectSSE() {
       throw new Error(`SSE connection failed: ${response.status}`);
     }
 
-    console.log("[JobAgent] SSE connected");
+    // SSE connected
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -363,7 +363,7 @@ async function connectSSE() {
     }
   } catch (err) {
     if (err.name === "AbortError") return; // Intentional disconnect
-    console.warn("[JobAgent] SSE error, retrying in 10s:", err.message);
+    // SSE error, will retry
   }
 
   // Reconnect after delay (unless intentionally disconnected)
@@ -431,7 +431,7 @@ async function handleSSEEvent(event, dataStr) {
 
       case "auto_apply": {
         // Agent wants the extension to auto-navigate and fill/submit jobs
-        console.log("[JobAgent] Auto-apply event received:", data.job?.company);
+        // auto-apply event received
 
         // Get profile from storage
         const stored = await chrome.storage.local.get(["userProfile"]);
@@ -451,13 +451,13 @@ async function handleSSEEvent(event, dataStr) {
       }
 
       case "connected":
-        console.log("[JobAgent] SSE stream confirmed for session:", data.sessionId);
+        // SSE stream confirmed
         break;
 
       case "auto_fill_request": {
         // Autonomous pipeline: navigate to job URL, fill form (no submit), report back
         const { queueId, jobUrl, jobTitle, company, matchScore, pack, profile, resumeFileUrl } = data;
-        console.log(`[JobAgent] Auto-fill request: ${jobTitle} at ${company} (score: ${matchScore})`);
+        // auto-fill request received
 
         // Add to fill queue (process sequentially to avoid overwhelming browser)
         addToFillQueue({ queueId, jobUrl, jobTitle, company, pack, profile, resumeFileUrl });
@@ -467,7 +467,7 @@ async function handleSSEEvent(event, dataStr) {
       case "submit_approved": {
         // Human approved — find the tab and click submit
         const { queueId: approvedQueueId, jobUrl: approvedUrl } = data;
-        console.log(`[JobAgent] Submit approved for queue item: ${approvedQueueId}`);
+        // submit approved
 
         // Find matching tab
         const tabs = await chrome.tabs.query({});
@@ -485,10 +485,10 @@ async function handleSSEEvent(event, dataStr) {
       }
 
       default:
-        console.log("[JobAgent] Unknown SSE event:", event, data);
+        // unknown SSE event
     }
   } catch (err) {
-    console.warn("[JobAgent] SSE event parse error:", err);
+    // SSE event parse error
   }
 }
 
@@ -515,7 +515,7 @@ async function processFillQueue() {
   try {
     await navigateAndFill(item);
   } catch (err) {
-    console.error("[JobAgent] Fill failed:", err);
+    // fill failed
     await reportFillResult(item.queueId, {
       success: false,
       error: err.message || String(err),
@@ -603,7 +603,7 @@ async function reportFillResult(queueId, result) {
       body: JSON.stringify(result),
     });
   } catch (err) {
-    console.warn("[JobAgent] Failed to report fill result:", err);
+    // report failed
   }
 }
 
@@ -799,7 +799,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         const current = await getSessionId();
         if (current !== grabbed) {
           await chrome.storage.local.set({ sessionId: grabbed });
-          console.log("[JobAgent] Auto-grabbed sessionId from dashboard");
+          // auto-grabbed sessionId from dashboard
         }
       }
     } catch {

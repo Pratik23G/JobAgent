@@ -346,7 +346,7 @@ async function uploadFileToInput(fileInput, fileData, fileName, mimeType) {
 
     return true;
   } catch (err) {
-    console.warn("[JobAgent] File upload failed:", err);
+    // file upload failed
     return false;
   }
 }
@@ -1182,7 +1182,7 @@ async function clickSubmitButton() {
 async function reportSubmission(pack, filledCount, resumeUploaded) {
   try {
     const { serverUrl, sessionId } = await chrome.storage.local.get(["serverUrl", "sessionId"]);
-    const baseUrl = serverUrl || "http://localhost:3000";
+    const baseUrl = serverUrl || "https://job-agent-umber.vercel.app";
 
     const res = await fetch(`${baseUrl}/api/extension/confirm-submit`, {
       method: "POST",
@@ -1200,7 +1200,7 @@ async function reportSubmission(pack, filledCount, resumeUploaded) {
     const data = await res.json();
     return data;
   } catch (err) {
-    console.warn("[JobAgent] Failed to report submission:", err);
+    // report failed
     return { success: false, error: String(err) };
   }
 }
@@ -1467,7 +1467,7 @@ function findAndClickApplyButton() {
 
     for (const applyText of applyTexts) {
       if (text === applyText || text.includes(applyText)) {
-        console.log(`[JobAgent] Found apply button: "${text}"`);
+        // found apply button
         el.click();
         el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
         return { clicked: true, isFormPage: false, buttonText: text, reason: `Clicked "${text}"` };
@@ -1683,7 +1683,7 @@ function showInlinePanel() {
     const profile = result.userProfile || {};
 
     if (!pack) {
-      statusEl.innerHTML = "No apply pack found.<br>Generate one from <a href='http://localhost:3000/dashboard/agent' target='_blank' style='color:#818cf8;'>JobAgent</a> first, then sync.";
+      statusEl.innerHTML = "No apply pack found.<br>Generate one from <a href='https://job-agent-umber.vercel.app/dashboard/agent' target='_blank' style='color:#818cf8;'>JobAgent</a> first, then sync.";
       return;
     }
 
@@ -1755,7 +1755,7 @@ function startFormObserver() {
         const fields = fillApplication(lastFillPack, lastFillProfile, ats);
         const filled = fields.filter(f => f.filled).length;
         if (filled > 0) {
-          console.log(`[JobAgent] Auto-filled ${filled} new fields after DOM update`);
+          // auto-filled new fields after DOM update
           // Update the panel status if visible
           const statusEl = document.getElementById("jobagent-panel-status");
           if (statusEl) {
@@ -1772,7 +1772,7 @@ function startFormObserver() {
     subtree: true,
   });
 
-  console.log(`[JobAgent] MutationObserver active for ${ats}`);
+  // MutationObserver active
 }
 
 // LinkedIn Easy Apply: also watch for the modal opening
@@ -1784,7 +1784,7 @@ function watchLinkedInEasyApply() {
     const modal = document.querySelector(".jobs-easy-apply-modal, .jobs-apply-modal, [data-test-modal]");
     if (modal && !modal.dataset.jobagentObserved) {
       modal.dataset.jobagentObserved = "true";
-      console.log("[JobAgent] LinkedIn Easy Apply modal detected");
+      // LinkedIn Easy Apply modal detected
 
       // Watch for step changes inside the modal
       const stepObserver = new MutationObserver(() => {
@@ -1793,7 +1793,7 @@ function watchLinkedInEasyApply() {
             const fields = fillLinkedIn(lastFillPack, lastFillProfile);
             const filled = fields.filter(f => f.filled).length;
             if (filled > 0) {
-              console.log(`[JobAgent] LinkedIn step change: filled ${filled} fields`);
+              // LinkedIn step change filled
             }
           }, 300);
         }
@@ -1818,13 +1818,13 @@ function watchIndeedApplication() {
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
         if (iframeDoc && !iframe.dataset.jobagentObserved) {
           iframe.dataset.jobagentObserved = "true";
-          console.log("[JobAgent] Indeed application iframe detected");
+          // Indeed application iframe detected
           // Note: cross-origin iframes will block access.
           // Same-origin iframes can be filled.
           if (lastFillPack && lastFillProfile) {
             const inputs = iframeDoc.querySelectorAll("input, textarea, select");
             if (inputs.length > 0) {
-              console.log(`[JobAgent] Found ${inputs.length} fields in Indeed iframe`);
+              // found fields in Indeed iframe
             }
           }
         }

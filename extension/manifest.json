@@ -1,12 +1,11 @@
 {
   "manifest_version": 3,
   "name": "JobAgent Auto-Fill",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Auto-fill job applications on any career page using your JobAgent apply packs",
   "permissions": ["storage", "activeTab", "scripting", "alarms", "tabs"],
   "host_permissions": [
-    "https://*/*",
-    "http://localhost:3000/*"
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"

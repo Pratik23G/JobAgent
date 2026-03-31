@@ -1,6 +1,6 @@
 // popup.js — JobAgent Auto-Fill Extension v2.1
 
-const DEFAULT_URL = "http://localhost:3000";
+const DEFAULT_URL = "https://job-agent-umber.vercel.app";
 
 async function getServerUrl() {
   const result = await chrome.storage.local.get("serverUrl");
@@ -27,7 +27,7 @@ async function ensureContentScript(tabId) {
       await new Promise(r => setTimeout(r, 500));
       return true;
     } catch (err) {
-      console.error("Failed to inject content script:", err);
+      // injection failed
       return false;
     }
   }
@@ -96,7 +96,7 @@ async function init() {
 
       if (data.source === "error") {
         syncBtn.textContent = "Sync error — check server logs";
-        console.error("Sync returned error source:", data);
+        // sync returned error
         return;
       }
 
@@ -124,7 +124,7 @@ async function init() {
       setTimeout(() => location.reload(), 1500);
     } catch (err) {
       syncBtn.textContent = "Sync failed — check URL";
-      console.error("Sync error:", err);
+      // sync failed
     }
     setTimeout(() => {
       syncBtn.textContent = "Sync Packs";
@@ -262,7 +262,7 @@ async function init() {
       fillBtn.textContent = `Filled ${results?.filledCount || 0} fields`;
     } catch (err) {
       fillBtn.textContent = "Fill failed — " + (err.message || "unknown error");
-      console.error("Fill error:", err);
+      // fill failed
     }
 
     setTimeout(() => { fillBtn.textContent = "Auto-Fill Application"; fillBtn.disabled = false; }, 3000);
@@ -386,7 +386,7 @@ async function init() {
       }
     } catch (err) {
       uploadBtn.textContent = "Upload failed — " + (err.message || "error");
-      console.error("Upload error:", err);
+      // upload failed
     }
 
     setTimeout(() => {
