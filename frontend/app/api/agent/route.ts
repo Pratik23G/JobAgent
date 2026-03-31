@@ -518,7 +518,7 @@ JSON format:
                 .select("id")
                 .single();
 
-              await supabase.from("apply_packs").insert({
+              const { data: packData } = await supabase.from("apply_packs").insert({
                 user_id: userId,
                 application_id: appData?.id || null,
                 job_title: job.title,
@@ -530,6 +530,18 @@ JSON format:
                 common_answers: pack.common_answers,
                 outreach_email: pack.outreach_email,
                 source: job.source || "adzuna",
+              }).select("id").single();
+
+              // Queue for the Auto-Apply Queue dashboard
+              await supabase.from("application_queue").insert({
+                user_id: userId,
+                application_id: appData?.id || null,
+                apply_pack_id: packData?.id || null,
+                job_url: job.url,
+                job_title: job.title,
+                company: job.company,
+                match_score: job.match_score || 0,
+                status: "pending_review",
               });
             }
 

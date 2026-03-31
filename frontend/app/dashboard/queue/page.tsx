@@ -40,7 +40,7 @@ export default function QueueDashboard() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const sessionId = typeof window !== "undefined"
-    ? localStorage.getItem("agent_session_id") || ""
+    ? localStorage.getItem("jobagent_session_id") || ""
     : "";
 
   const fetchQueue = useCallback(async () => {

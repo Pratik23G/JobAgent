@@ -1,7 +1,14 @@
-// GET /api/extension/sync — Extension pulls latest data from Supabase.
+// GET|POST /api/extension/sync — Extension pulls latest data from Supabase.
+// POST supported because some callers (extension, agent) send a body with sessionId.
 // No file cache — reads directly from database (safe for serverless/Vercel).
 
 import { getServiceClient } from "@/lib/db";
+
+export async function POST(request: Request) {
+  // POST just delegates to GET logic; body is optional context (sessionId, etc.)
+  void request;
+  return GET();
+}
 
 export async function GET() {
   const supabase = getServiceClient();
