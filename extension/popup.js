@@ -67,13 +67,22 @@ async function init() {
         : `${url}/api/extension/sync`;
 
       const res = await fetch(syncUrl);
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}`);
+      }
       const data = await res.json();
+
+      if (data.source === "error") {
+        syncBtn.textContent = "Sync error — check server logs";
+        console.error("Sync returned error source:", data);
+        return;
+      }
 
       // Store packs (replace, not merge)
       await chrome.storage.local.set({ applyPacks: data.packs || [] });
 
-      // Store profile
-      if (data.profile) {
+      // Store profile (parsed resume data for form filling)
+      if (data.profile && Object.keys(data.profile).length > 0) {
         await chrome.storage.local.set({ userProfile: data.profile });
       }
 

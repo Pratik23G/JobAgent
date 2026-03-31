@@ -639,10 +639,13 @@ async function syncFromBackend() {
     if (!res.ok) return;
 
     const data = await res.json();
+    if (data.source === "error") return;
+
     // Always replace packs with latest from server (not merge)
     await chrome.storage.local.set({ applyPacks: data.packs || [] });
 
-    if (data.profile) {
+    // Store profile (parsed resume data for form filling)
+    if (data.profile && Object.keys(data.profile).length > 0) {
       await chrome.storage.local.set({ userProfile: data.profile });
     }
 

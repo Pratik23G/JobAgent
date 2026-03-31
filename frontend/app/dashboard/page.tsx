@@ -161,10 +161,8 @@ export default function DashboardOverview() {
   const applied = applications.filter((a) => a.status === "applied").length;
   const interviews = applications.filter((a) => a.status === "interview").length;
   const offers = applications.filter((a) => a.status === "offer").length;
-  const responded = applications.filter(
-    (a) => a.status !== "applied" && a.status !== "ready" && a.status !== "ghosted"
-  ).length;
-  const responseRate = applied > 0 ? `${Math.round((responded / applied) * 100)}%` : "\u2014";
+  const totalApplied = applications.filter((a) => a.status !== "ready").length;
+  const responseRate = totalApplied > 0 ? `${Math.round((interviews / totalApplied) * 100)}%` : "0%";
 
   const statCards = [
     { label: "Ready to Apply", value: String(ready), color: "text-yellow-400" },

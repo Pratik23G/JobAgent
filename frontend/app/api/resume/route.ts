@@ -93,20 +93,23 @@ Return ONLY the JSON, no markdown, no explanation.`,
   const resumeDataUri = `data:application/pdf;base64,${base64}`;
 
   // Store in Supabase (always — auth or anonymous)
+  // Delete-then-insert because resumes table has no unique constraint on user_id
   if (userId) {
     const supabase = getServiceClient();
-    const { error: dbError } = await supabase.from("resumes").upsert(
-      {
-        user_id: userId,
-        raw_text: rawText,
-        parsed_json: parsed,
-        file_url: resumeDataUri,
-      },
-      { onConflict: "user_id" }
-    );
+    await supabase.from("resumes").delete().eq("user_id", userId);
+    const { error: dbError } = await supabase.from("resumes").insert({
+      user_id: userId,
+      raw_text: rawText,
+      parsed_json: parsed,
+      file_url: resumeDataUri,
+    });
 
     if (dbError) {
-      console.error("Supabase error:", dbError);
+      console.error("[resume] Supabase insert error:", dbError);
+      return Response.json(
+        { error: "Resume parsed but failed to save. Try again." },
+        { status: 500 }
+      );
     }
   }
 
