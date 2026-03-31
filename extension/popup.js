@@ -61,7 +61,29 @@ async function init() {
     syncBtn.disabled = true;
     try {
       const url = serverUrlInput.value.trim() || DEFAULT_URL;
-      const { sessionId } = await chrome.storage.local.get("sessionId");
+      let { sessionId } = await chrome.storage.local.get("sessionId");
+
+      // If no sessionId stored, try to grab it from an open dashboard tab
+      if (!sessionId) {
+        try {
+          const dashTabs = await chrome.tabs.query({ url: `${url}/*` });
+          for (const dt of dashTabs) {
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: dt.id },
+              func: () => localStorage.getItem("jobagent_session_id"),
+            });
+            const grabbed = results?.[0]?.result;
+            if (grabbed) {
+              sessionId = grabbed;
+              await chrome.storage.local.set({ sessionId });
+              break;
+            }
+          }
+        } catch {
+          // Injection not allowed — continue without sessionId
+        }
+      }
+
       const syncUrl = sessionId
         ? `${url}/api/extension/sync?sessionId=${sessionId}`
         : `${url}/api/extension/sync`;

@@ -786,6 +786,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !tab.url) return;
 
+  // Auto-grab sessionId when user visits the dashboard
+  const serverUrl = await getServerUrl();
+  if (tab.url.startsWith(serverUrl)) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => localStorage.getItem("jobagent_session_id"),
+      });
+      const grabbed = results?.[0]?.result;
+      if (grabbed) {
+        const current = await getSessionId();
+        if (current !== grabbed) {
+          await chrome.storage.local.set({ sessionId: grabbed });
+          console.log("[JobAgent] Auto-grabbed sessionId from dashboard");
+        }
+      }
+    } catch {
+      // Tab may not allow script injection — ignore
+    }
+  }
+
   const ats = detectATS(tab.url);
   if (ats) {
     chrome.action.setBadgeText({ text: "!", tabId });
