@@ -7,7 +7,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="relative min-h-screen md:h-screen md:overflow-hidden md:flex flex flex-col">
+    <div className="relative flex flex-col min-h-screen md:flex-row md:h-screen md:overflow-hidden">
       {/* Desktop sidebar — hidden below md via wrapper */}
       <div className="hidden md:block">
         <Sidebar />
