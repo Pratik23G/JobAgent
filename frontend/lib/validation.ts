@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 // ─── Agent command validation ───────────────────────────────────────────────
 
 export const AgentCommandSchema = z.object({
-  command: z.string().min(1, "Command cannot be empty").max(2000, "Command too long (max 2000 chars)"),
+  command: z.string().min(1, "Command cannot be empty").max(5000, "Command too long (max 5000 chars)"),
   sessionId: z.string().max(100).optional(),
   chatHistory: z
     .array(z.object({ role: z.string(), text: z.string().max(5000) }))
